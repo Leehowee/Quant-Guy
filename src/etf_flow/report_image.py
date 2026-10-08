@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
+from industry_flow.fonts import load_report_font as _font
 
 
 WIDTH = 1200
@@ -16,18 +17,6 @@ RED = "#C44949"
 BLUE = "#315E9B"
 CARD = "#FFFFFF"
 LINE = "#E6EBF2"
-
-
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = (
-        [Path("C:/Windows/Fonts/msyhbd.ttc"), Path("C:/Windows/Fonts/msyh.ttc")]
-        if bold
-        else [Path("C:/Windows/Fonts/msyh.ttc"), Path("C:/Windows/Fonts/msyhbd.ttc")]
-    )
-    for path in candidates:
-        if path.is_file():
-            return ImageFont.truetype(str(path), size=size)
-    return ImageFont.load_default()
 
 
 def _format_pct(value: Any) -> str:

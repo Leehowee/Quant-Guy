@@ -7,6 +7,8 @@ description: Run and explain A-share industry and ETF fund-flow statistics with 
 
 Use this skill to collect and summarize the project's two descriptive datasets:
 
+The bundled commands run on Windows, Linux and macOS with Python 3.10+. Use the user's configured Python environment; see the README for OS-specific environment setup and font requirements for PNG reports.
+
 - **Industry flow:** Tonghuashun industry snapshots for instant, 3-, 5-, 10- and 20-day periods. Historical Eastmoney data is a separate dataset and is not merged with Tonghuashun figures.
 - **ETF flow:** Exchange-reported ETF share changes multiplied by a closing price to estimate subscription/redemption flow. This is an estimate, not an observed cash-flow figure.
 

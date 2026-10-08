@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
+from .fonts import load_report_font as _font
 
 
 WIDTH = 1200
@@ -18,18 +19,6 @@ BLUE = "#315E9B"
 CARD = "#FFFFFF"
 LINE = "#E6EBF2"
 PERIODS = ("即时", "3日", "5日", "10日", "20日")
-
-
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = (
-        [Path("C:/Windows/Fonts/msyhbd.ttc"), Path("C:/Windows/Fonts/msyh.ttc")]
-        if bold
-        else [Path("C:/Windows/Fonts/msyh.ttc"), Path("C:/Windows/Fonts/msyhbd.ttc")]
-    )
-    for path in candidates:
-        if path.is_file():
-            return ImageFont.truetype(str(path), size=size)
-    return ImageFont.load_default()
 
 
 def _present(value: Any) -> bool:

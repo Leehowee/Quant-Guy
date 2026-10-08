@@ -6,12 +6,42 @@
 
 ## 安装
 
-克隆仓库到 Codex skills 目录，并安装 Python 依赖。Windows 默认目录为：
+### 安装为 Codex Skill
+
+Windows PowerShell：
 
 ```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills" | Out-Null
 git clone https://github.com/Leehowee/Quant-Guy.git "$env:USERPROFILE\.codex\skills\a-share-fund-flow"
 Set-Location "$env:USERPROFILE\.codex\skills\a-share-fund-flow"
-py -3 -m pip install -r requirements.txt
+```
+
+macOS / Linux：
+
+```sh
+mkdir -p "$HOME/.codex/skills"
+git clone https://github.com/Leehowee/Quant-Guy.git "$HOME/.codex/skills/a-share-fund-flow"
+cd "$HOME/.codex/skills/a-share-fund-flow"
+```
+
+### 安装 Python 依赖
+
+项目需要 Python 3.10 或更新版本。建议使用仓库内的虚拟环境。
+
+Windows PowerShell：
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+macOS / Linux：
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
 重启或刷新 Codex 后，可在请求中使用 `$a-share-fund-flow`，例如：
@@ -50,54 +80,58 @@ py -3 -m pip install -r requirements.txt
 
 配置里的 API 名称和 URL 会在程序下次启动时读取。若上游接口的参数或返回列发生变化，还需要同步调整 `src/industry_flow/source.py` 或 `src/etf_flow/` 中对应的数据解析代码。
 
-目录职责：`bin/` 放命令行入口和 Windows 定时任务脚本；`config/` 放环境变量模板和数据源配置；`src/industry_flow/` 放行业统计；`src/etf_flow/` 放 ETF 统计。
+目录职责：`bin/` 放命令行入口、Windows 定时任务脚本和 POSIX 定时任务入口；`config/` 放环境变量模板和数据源配置；`src/industry_flow/` 放行业统计；`src/etf_flow/` 放 ETF 统计。
 
 ## 手动运行
 
 在仓库目录执行：
 
-```powershell
+```sh
 # 行业资金流每日快照与特征
-py -3 bin/run_daily.py
+python bin/run_daily.py
 
 # ETF 份额变化与净申购估算
-py -3 bin/run_etf_flow_daily.py
+python bin/run_etf_flow_daily.py
 
 # 行业历史数据回溯（请求量较大）
-py -3 bin/run_backfill.py
+python bin/run_backfill.py
 
 # 回溯最近 20 个 ETF 交易日
-py -3 bin/run_etf_backfill.py --sessions 20
+python bin/run_etf_backfill.py --sessions 20
 ```
 
 指定 ETF 回溯结束日：
 
-```powershell
-py -3 bin/run_etf_backfill.py --sessions 20 --end-date 2026-10-07
+```sh
+python bin/run_etf_backfill.py --sessions 20 --end-date 2026-10-07
 ```
 
 日报命令默认只采集、保存并在终端显示，不会发送钉钉消息。只有用户明确要求发送时才添加 `--send`：
 
-```powershell
-py -3 bin/run_daily.py --send
-py -3 bin/run_etf_flow_daily.py --send
+```sh
+python bin/run_daily.py --send
+python bin/run_etf_flow_daily.py --send
 ```
 
 若明确要求重发已发送的行业日报，可用 `--send --force-send`。ETF 命令也支持 `--force-send`。行业与 ETF 回溯会访问上游数据源并写入本地历史文件，运行耗时取决于请求数量和网络情况。
 
 ## 配置
 
-Python 3.10 或更新版本。安装依赖：
-
-```powershell
-py -3 -m pip install -r requirements.txt
-```
-
 钉钉推送可选。将 `config/.env.example` 复制为仓库根目录的 `.env`，只在本地填写所需的机器人配置。`.env`、本地行情数据、日志和报告已列入 `.gitignore`。
+
+Windows PowerShell：
 
 ```powershell
 Copy-Item config/.env.example .env
 ```
+
+macOS / Linux：
+
+```sh
+cp config/.env.example .env
+```
+
+生成 PNG 图片报告时需要系统中有中文 TrueType 字体。macOS 通常自带苹方；Linux 可安装 Noto CJK 字体，例如 Debian/Ubuntu 上运行 `sudo apt-get install fonts-noto-cjk`。也可以在 `.env` 中设置 `REPORT_FONT` 和可选的 `REPORT_FONT_BOLD`，指向字体文件。
 
 常用变量：
 
@@ -110,6 +144,7 @@ Copy-Item config/.env.example .env
 | `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_OPEN_CONVERSATION_ID` | 可选的钉钉应用机器人图片推送配置 |
 | `EASTMONEY_DIRECT` | 是否绕过 Python 代理环境变量直连东方财富，默认 `0` |
 | `DATA_SOURCE_CONFIG` | 数据源 JSON 路径，默认 `config/data_sources.json` |
+| `REPORT_FONT`、`REPORT_FONT_BOLD` | 可选的常规与粗体中文字体文件路径 |
 
 ## 输出
 
@@ -119,9 +154,11 @@ Copy-Item config/.env.example .env
 
 所有这些目录均为本机运行数据，不包含在仓库中。
 
-## Windows 定时任务（可选）
+## 定时任务（可选）
 
-在 PowerShell 中运行 `bin/register_daily_task.ps1` 和/或 `bin/register_etf_daily_task.ps1` 可注册工作日 18:00 任务。定时脚本会显式启用 `--send`；若不希望推送，请直接使用 Python 命令，或不要注册定时任务。
+Windows 可在 PowerShell 中运行 `bin/register_daily_task.ps1` 和/或 `bin/register_etf_daily_task.ps1` 注册工作日 18:00 任务。Linux 可使用 cron，macOS 可使用 launchd；配置示例见 [CROSS_PLATFORM_SCHEDULING.md](CROSS_PLATFORM_SCHEDULING.md)。
+
+计划任务会显式启用 `--send`；若不希望推送，请直接运行 Python 命令或不要注册计划任务。Windows 详细说明见 [WINDOWS_TASK_SCHEDULER.md](WINDOWS_TASK_SCHEDULER.md)。
 
 ## 数据与使用限制
 
