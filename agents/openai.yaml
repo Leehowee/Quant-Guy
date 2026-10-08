@@ -1,0 +1,6 @@
+interface:
+  display_name: "A股资金流统计"
+  short_description: "运行A股行业与ETF资金流统计并生成日报"
+  default_prompt: "Use $a-share-fund-flow to run the A-share industry or ETF flow statistics I requested and explain the data date and limitations."
+policy:
+  allow_implicit_invocation: true

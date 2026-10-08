@@ -1,0 +1,28 @@
+# Local credentials and environment
+.env
+.env.*
+!.env.example
+
+# Collected market data and generated reports
+/data/
+/reports/
+
+# Python and editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# Runtime files
+*.log
+*.pid
+*.tmp
+
+# OS artifacts
+.DS_Store
+Thumbs.db
