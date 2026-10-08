@@ -61,14 +61,6 @@ class Settings:
     dingtalk_open_conversation_id: str = os.getenv(
         "DINGTALK_OPEN_CONVERSATION_ID", ""
     ).strip()
-    openclaw_channel: str = os.getenv("OPENCLAW_CHANNEL", "").strip()
-    openclaw_target: str = os.getenv("OPENCLAW_TARGET", "").strip()
-    openclaw_account: str = os.getenv("OPENCLAW_ACCOUNT", "").strip()
-    openclaw_bin: str = os.getenv("OPENCLAW_BIN", "openclaw").strip() or "openclaw"
-    openclaw_timeout: int = int(os.getenv("OPENCLAW_TIMEOUT", "90"))
-    openclaw_send_image: bool = os.getenv(
-        "OPENCLAW_SEND_IMAGE", "0"
-    ).strip().lower() in {"1", "true", "yes", "on"}
     digest_top_n: int = int(os.getenv("DIGEST_TOP_N", "5"))
     request_retries: int = int(os.getenv("REQUEST_RETRIES", "3"))
     request_retry_sleep: float = float(os.getenv("REQUEST_RETRY_SLEEP", "2"))
@@ -104,14 +96,6 @@ class Settings:
             and (self.dingtalk_robot_code or self.dingtalk_client_id)
             and self.dingtalk_open_conversation_id
         )
-
-    @property
-    def openclaw_configured(self) -> bool:
-        return bool(self.openclaw_channel or self.openclaw_target)
-
-    @property
-    def openclaw_ready(self) -> bool:
-        return bool(self.openclaw_channel and self.openclaw_target)
 
     @property
     def history_file(self) -> Path:

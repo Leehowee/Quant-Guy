@@ -133,30 +133,6 @@ cp config/.env.example .env
 
 生成 PNG 图片报告时需要系统中有中文 TrueType 字体。macOS 通常自带苹方；Linux 可安装 Noto CJK 字体，例如 Debian/Ubuntu 上运行 `sudo apt-get install fonts-noto-cjk`。也可以在 `.env` 中设置 `REPORT_FONT` 和可选的 `REPORT_FONT_BOLD`，指向字体文件。
 
-### OpenClaw 多平台推送
-
-仓库通过 OpenClaw CLI 的通用 `message send` 接口发送报告。先在 OpenClaw 中安装并配置目标 channel，再在项目 `.env` 中填写 `OPENCLAW_CHANNEL` 和 `OPENCLAW_TARGET`。OpenClaw 管理 Telegram、Slack、Discord、Signal、Matrix、Teams 等通道的连接和认证；本仓库不保存这些平台的令牌。详见 [OpenClaw message send 文档](https://github.com/openclaw/openclaw/blob/main/docs/cli/message.md) 和 [channels 文档](https://github.com/openclaw/openclaw/blob/main/docs/cli/channels.md)。
-
-例如先通过 OpenClaw 配置 Telegram 账户并检查通道状态：
-
-```sh
-openclaw channels add --channel telegram
-openclaw channels status --probe
-```
-
-例如，将日报发送到 Telegram：
-
-```dotenv
-OPENCLAW_CHANNEL=telegram
-OPENCLAW_TARGET=@your_channel
-OPENCLAW_ACCOUNT=default
-OPENCLAW_BIN=openclaw
-OPENCLAW_TIMEOUT=90
-OPENCLAW_SEND_IMAGE=0
-```
-
-Slack、Discord 等渠道只需替换 `OPENCLAW_CHANNEL` 和 `OPENCLAW_TARGET` 为 OpenClaw 对应的 channel 与目标标识。若需同时发送 PNG 图片，将 `OPENCLAW_SEND_IMAGE` 设为 `1`，并确认目标通道支持媒体发送。若 CLI 不在计划任务的 `PATH` 中，把 `OPENCLAW_BIN` 设为其绝对路径。配置完成后，显式运行 `--send` 会发送到已配置的钉钉和 OpenClaw 目标；两者都配置时会同时发送。OpenClaw 的渠道账户通过 `openclaw channels add` 设置，目标用 `openclaw channels resolve` 或相应渠道文档确认。
-
 常用变量：
 
 | 变量 | 用途 |
@@ -169,9 +145,6 @@ Slack、Discord 等渠道只需替换 `OPENCLAW_CHANNEL` 和 `OPENCLAW_TARGET` �
 | `EASTMONEY_DIRECT` | 是否绕过 Python 代理环境变量直连东方财富，默认 `0` |
 | `DATA_SOURCE_CONFIG` | 数据源 JSON 路径，默认 `config/data_sources.json` |
 | `REPORT_FONT`、`REPORT_FONT_BOLD` | 可选的常规与粗体中文字体文件路径 |
-| `OPENCLAW_CHANNEL`、`OPENCLAW_TARGET` | 可选的 OpenClaw 通道和目标；两项都填写才会发送 |
-| `OPENCLAW_ACCOUNT`、`OPENCLAW_BIN`、`OPENCLAW_TIMEOUT` | OpenClaw 账户、CLI 路径和发送超时 |
-| `OPENCLAW_SEND_IMAGE` | 是否附带 PNG 报告，默认 `0` |
 
 ## 输出
 

@@ -4,7 +4,7 @@
 
 ## 注册任务
 
-确保运行任务的 Python 已安装 `requirements.txt` 中的依赖。若需要推送，请在 `.env` 配置对应渠道：行业和 ETF 日报都可使用钉钉 Webhook/应用机器人或 OpenClaw。OpenClaw 的账户认证保存在 OpenClaw 自身配置中。然后在项目目录 PowerShell 执行：
+先在项目 `.env` 填写 `DINGTALK_WEBHOOK`，并确保运行任务的 Python 已安装 `requirements.txt` 中的依赖。然后在项目目录 PowerShell 执行：
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
@@ -27,7 +27,7 @@ $log = Get-ChildItem 'data\processed\daily_*.log' | Sort-Object LastWriteTime -D
 Get-Content $log.FullName -Tail 80 -Wait
 ```
 
-如果任务错过计划时间，会尽快补启动。未配置钉钉或 OpenClaw 推送目标时，数据照常采集，但不会发送通知。
+如果任务错过计划时间，会尽快补启动。钉钉机器人 Webhook 未填写时，数据照常采集，但不会发送通知。
 
 ## 历史回溯
 

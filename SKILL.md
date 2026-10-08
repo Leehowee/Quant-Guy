@@ -30,7 +30,7 @@ Daily commands save raw snapshots and update local Parquet history under `data/`
 
 ## External delivery
 
-Daily commands do not send messages by default. Add `--send` only when the user explicitly asks to send the report. Add `--force-send` only when they specifically ask to resend a report that was already delivered. Keep DingTalk credentials in the local `.env`; OpenClaw channel credentials belong in OpenClaw's own account configuration. Never print or include either set of credentials in summaries. When a route is configured, the command can send through DingTalk and/or OpenClaw.
+Daily commands do not send DingTalk messages by default. Add `--send` only when the user explicitly asks to send the report. Add `--force-send` only when they specifically ask to resend a report that was already delivered. Keep DingTalk credentials in the local `.env`; never print or include them in summaries.
 
 ## Explain the numbers
 
