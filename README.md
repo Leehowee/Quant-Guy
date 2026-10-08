@@ -9,7 +9,7 @@
 克隆仓库到 Codex skills 目录，并安装 Python 依赖。Windows 默认目录为：
 
 ```powershell
-git clone https://github.com/Leehowee/a-share-fund-flow.git "$env:USERPROFILE\.codex\skills\a-share-fund-flow"
+git clone https://github.com/Leehowee/Quant-Guy.git "$env:USERPROFILE\.codex\skills\a-share-fund-flow"
 Set-Location "$env:USERPROFILE\.codex\skills\a-share-fund-flow"
 py -3 -m pip install -r requirements.txt
 ```
