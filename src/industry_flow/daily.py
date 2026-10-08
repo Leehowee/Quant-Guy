@@ -5,9 +5,10 @@ import pandas as pd
 
 from .config import settings
 from .digest import build_ths_period_digest
-from .dingtalk import send_group_image_markdown
+from .dingtalk import send_group_image_markdown, send_markdown
 from .features import build_features
 from .industry_report_image import render_industry_report_png
+from .openclaw import send_openclaw_message
 from .source import (
     THS_PERIODS,
     fetch_ths_industry_flow,
@@ -78,46 +79,98 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
         features,
         top_n=settings.digest_top_n,
     )
-    if settings.dingtalk_keyword and settings.dingtalk_keyword not in msg:
-        msg = f"{msg}\n{settings.dingtalk_keyword}"
+    dingtalk_message = msg
+    if (
+        settings.dingtalk_keyword
+        and settings.dingtalk_keyword not in dingtalk_message
+    ):
+        dingtalk_message = f"{dingtalk_message}\n{settings.dingtalk_keyword}"
 
-    print(msg)
+    print(dingtalk_message)
 
     if send_dingtalk:
-        sent_marker = (
-            settings.processed_dir
-            / f"dingtalk_ths_periods_sent_{today:%Y%m%d}.txt"
-        )
-        if sent_marker.exists() and not force_send:
-            print(f"[daily] DingTalk already sent for {today}; skip duplicate.")
-        elif settings.dingtalk_app_configured and not settings.dingtalk_app_ready:
+        if settings.dingtalk_app_configured and not settings.dingtalk_app_ready:
             raise RuntimeError(
                 "Incomplete DingTalk app configuration for image delivery; set "
                 "DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET, and "
                 "DINGTALK_OPEN_CONVERSATION_ID."
             )
-        elif settings.dingtalk_app_ready:
-            image_path = settings.reports_dir / f"industry_flow_{today:%Y%m%d}.png"
-            render_industry_report_png(
-                features,
-                today,
-                image_path,
-                top_n=settings.digest_top_n,
+        if settings.openclaw_configured and not settings.openclaw_ready:
+            raise RuntimeError(
+                "OpenClaw delivery requires both OPENCLAW_CHANNEL and OPENCLAW_TARGET."
             )
-            title = f"行业资金流日报 {today:%Y-%m-%d}"
-            send_group_image_markdown(
-                settings.dingtalk_client_id,
-                settings.dingtalk_client_secret,
-                settings.dingtalk_robot_code or settings.dingtalk_client_id,
-                settings.dingtalk_open_conversation_id,
-                image_path,
-                title,
+
+        image_path = settings.reports_dir / f"industry_flow_{today:%Y%m%d}.png"
+        image_ready = False
+
+        def ensure_image() -> None:
+            nonlocal image_ready
+            if not image_ready:
+                render_industry_report_png(
+                    features,
+                    today,
+                    image_path,
+                    top_n=settings.digest_top_n,
+                )
+                image_ready = True
+
+        dingtalk_configured = bool(
+            settings.dingtalk_app_ready or settings.dingtalk_webhook
+        )
+        if dingtalk_configured:
+            sent_marker = (
+                settings.processed_dir
+                / f"dingtalk_ths_periods_sent_{today:%Y%m%d}.txt"
             )
-            sent_marker.write_text(
-                f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n"
-                f"image={image_path.name}\n",
-                encoding="utf-8",
+            if sent_marker.exists() and not force_send:
+                print(f"[daily] DingTalk already sent for {today}; skip duplicate.")
+            elif settings.dingtalk_app_ready:
+                ensure_image()
+                title = f"行业资金流日报 {today:%Y-%m-%d}"
+                send_group_image_markdown(
+                    settings.dingtalk_client_id,
+                    settings.dingtalk_client_secret,
+                    settings.dingtalk_robot_code or settings.dingtalk_client_id,
+                    settings.dingtalk_open_conversation_id,
+                    image_path,
+                    title,
+                )
+                sent_marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n"
+                    f"image={image_path.name}\n",
+                    encoding="utf-8",
+                )
+                print(f"[daily] DingTalk infographic sent: {image_path}")
+            else:
+                title = f"行业资金流日报 {today:%Y-%m-%d}"
+                send_markdown(settings.dingtalk_webhook, title, dingtalk_message)
+                sent_marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+                print("[daily] report sent via DingTalk webhook")
+
+        if settings.openclaw_ready:
+            sent_marker = (
+                settings.processed_dir
+                / f"openclaw_ths_periods_sent_{today:%Y%m%d}.txt"
             )
-            print(f"[daily] DingTalk infographic sent: {image_path}")
-        else:
-            print("[daily] DingTalk app credentials are not configured; skip image send.")
+            if sent_marker.exists() and not force_send:
+                print(f"[daily] OpenClaw already sent for {today}; skip duplicate.")
+            else:
+                media_path = None
+                if settings.openclaw_send_image:
+                    ensure_image()
+                    media_path = image_path
+                send_openclaw_message(msg, media_path=media_path)
+                sent_marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+                print(
+                    f"[daily] report sent via OpenClaw channel "
+                    f"{settings.openclaw_channel}"
+                )
+
+        if not dingtalk_configured and not settings.openclaw_ready:
+            print("[daily] no DingTalk or OpenClaw route configured; skip send.")

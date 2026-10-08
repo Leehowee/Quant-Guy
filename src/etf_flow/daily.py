@@ -14,6 +14,7 @@ from industry_flow.dingtalk import (
     send_markdown,
     upload_image,
 )
+from industry_flow.openclaw import send_openclaw_message
 from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
 from .report_image import render_etf_report_png
 
@@ -629,14 +630,30 @@ def run_etf_daily(
                 "DINGTALK_CLIENT_SECRET, and DINGTALK_OPEN_CONVERSATION_ID "
                 "(DINGTALK_ROBOT_CODE is optional when it matches Client ID)."
             )
-        marker = settings.processed_dir / f"dingtalk_etf_sent_{target_date:%Y%m%d}.txt"
-        if marker.exists() and not force_send:
-            print(f"[etf] DingTalk already sent for {target_date}; skip duplicate")
-        else:
-            title = f"ETF资金流日报 {target_date:%Y-%m-%d}"
-            if settings.dingtalk_app_ready:
-                image_path = settings.reports_dir / f"etf_flow_{target_date:%Y%m%d}.png"
+        if settings.openclaw_configured and not settings.openclaw_ready:
+            raise RuntimeError(
+                "OpenClaw delivery requires both OPENCLAW_CHANNEL and OPENCLAW_TARGET."
+            )
+
+        title = f"ETF资金流日报 {target_date:%Y-%m-%d}"
+        image_path = settings.reports_dir / f"etf_flow_{target_date:%Y%m%d}.png"
+        image_ready = False
+
+        def ensure_image() -> None:
+            nonlocal image_ready
+            if not image_ready:
                 render_etf_report_png(summaries, target_date, image_path)
+                image_ready = True
+
+        dingtalk_configured = bool(
+            settings.dingtalk_app_ready or settings.dingtalk_webhook
+        )
+        if dingtalk_configured:
+            marker = settings.processed_dir / f"dingtalk_etf_sent_{target_date:%Y%m%d}.txt"
+            if marker.exists() and not force_send:
+                print(f"[etf] DingTalk already sent for {target_date}; skip duplicate")
+            elif settings.dingtalk_app_ready:
+                ensure_image()
                 access_token = get_app_access_token(
                     settings.dingtalk_client_id,
                     settings.dingtalk_client_secret,
@@ -668,18 +685,45 @@ def run_etf_daily(
                     send_markdown(settings.dingtalk_webhook, title, image_message)
                     print("[etf] infographic sent via configured group webhook")
                 print(f"[etf] infographic saved: {image_path}")
-            elif settings.dingtalk_webhook:
-                if settings.dingtalk_keyword and settings.dingtalk_keyword not in message:
-                    message = f"{message}\n{settings.dingtalk_keyword}"
-                send_markdown(settings.dingtalk_webhook, title, message)
+                marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
             else:
-                print("[etf] no DingTalk app credentials or webhook configured; skip send")
-                return df
-            marker.write_text(
-                f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
-                encoding="utf-8",
-            )
-            print("[etf] DingTalk sent")
+                dingtalk_message = message
+                if (
+                    settings.dingtalk_keyword
+                    and settings.dingtalk_keyword not in dingtalk_message
+                ):
+                    dingtalk_message = f"{dingtalk_message}\n{settings.dingtalk_keyword}"
+                send_markdown(settings.dingtalk_webhook, title, dingtalk_message)
+                marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+                print("[etf] report sent via DingTalk webhook")
+
+        if settings.openclaw_ready:
+            marker = settings.processed_dir / f"openclaw_etf_sent_{target_date:%Y%m%d}.txt"
+            if marker.exists() and not force_send:
+                print(f"[etf] OpenClaw already sent for {target_date}; skip duplicate")
+            else:
+                media_path = None
+                if settings.openclaw_send_image:
+                    ensure_image()
+                    media_path = image_path
+                send_openclaw_message(message, media_path=media_path)
+                marker.write_text(
+                    f"sent_at={dt.datetime.now().isoformat(timespec='seconds')}\n",
+                    encoding="utf-8",
+                )
+                print(
+                    f"[etf] report sent via OpenClaw channel "
+                    f"{settings.openclaw_channel}"
+                )
+
+        if not dingtalk_configured and not settings.openclaw_ready:
+            print("[etf] no DingTalk or OpenClaw route configured; skip send")
     return df
 
 
