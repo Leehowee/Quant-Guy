@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
 
-import akshare as ak
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT / "src"))
-
-from industry_flow.etf_daily import (  # noqa: E402
+from industry_flow.config import data_sources, resolve_akshare_api
+from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
+from .daily import (
     ETF_KEY,
     OUTPUT_COLUMNS,
     _daily_file,
@@ -22,11 +18,14 @@ from industry_flow.etf_daily import (  # noqa: E402
     _upsert_history,
     _write_csv_atomic,
 )
-from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic  # noqa: E402
+
+
+_TRADE_CALENDAR_API = data_sources["trade_calendar"]["api"]
+_ETF_SOURCES = data_sources["etf"]
 
 
 def _dates_before(end_date: dt.date) -> list[dt.date]:
-    calendar = ak.tool_trade_date_hist_sina()
+    calendar = resolve_akshare_api(_TRADE_CALENDAR_API)()
     if "trade_date" not in calendar:
         raise RuntimeError("交易日历缺少 trade_date 列")
     dates = pd.to_datetime(calendar["trade_date"], errors="coerce").dropna().dt.date
@@ -38,11 +37,12 @@ def _fetch_shares(dates: list[dt.date]) -> dict[dt.date, pd.DataFrame]:
 
     # Shenzhen provides the full ETF share history for the requested date range
     # in one exchange workbook.
+    share_sources = _ETF_SOURCES["shares"]
     start_arg, end_arg = dates[0].strftime("%Y%m%d"), dates[-1].strftime("%Y%m%d")
-    szse_raw = ak.fund_scale_daily_szse(
+    szse_raw = resolve_akshare_api(share_sources["szse_api"])(
         start_date=start_arg,
         end_date=end_arg,
-        symbol="ETF",
+        symbol=share_sources["szse_symbol"],
     )
     if not {"日期", "基金代码", "基金简称", "基金份额"}.issubset(szse_raw.columns):
         raise RuntimeError(f"深交所历史份额返回列不完整：{szse_raw.columns.tolist()}")
@@ -50,7 +50,9 @@ def _fetch_shares(dates: list[dt.date]) -> dict[dt.date, pd.DataFrame]:
     szse_raw["_date"] = pd.to_datetime(szse_raw["日期"], errors="coerce").dt.date
 
     for index, target_date in enumerate(dates, 1):
-        raw = ak.fund_etf_scale_sse(date=target_date.strftime("%Y%m%d"))
+        raw = resolve_akshare_api(share_sources["sse_api"])(
+            date=target_date.strftime("%Y%m%d")
+        )
         if "统计日期" not in raw.columns:
             raise RuntimeError(f"上交所 {target_date} 响应缺少统计日期")
         returned_dates = pd.to_datetime(raw["统计日期"], errors="coerce").dropna().dt.date.unique()
@@ -77,9 +79,10 @@ def _fetch_shares(dates: list[dt.date]) -> dict[dt.date, pd.DataFrame]:
 
 def _fetch_one_price(exchange: str, code: str) -> tuple[str, str, pd.DataFrame | None, str | None]:
     symbol = ("sh" if exchange == "SSE" else "sz") + code
+    history_api = _ETF_SOURCES["prices"]["history_api"]
     for attempt in range(1, 4):
         try:
-            raw = ak.fund_etf_hist_sina(symbol=symbol)
+            raw = resolve_akshare_api(history_api)(symbol=symbol)
             if raw.empty or not {"date", "close"}.issubset(raw.columns):
                 raise RuntimeError("Sina 日线为空或缺少 date/close")
             price = raw[["date", "close"]].copy()
@@ -99,6 +102,7 @@ def _fetch_changed_prices(
     changed: pd.DataFrame,
     dates: list[dt.date],
 ) -> tuple[pd.DataFrame, list[str]]:
+    history_api = _ETF_SOURCES["prices"]["history_api"]
     instruments = changed[["exchange", "code"]].drop_duplicates().sort_values(["exchange", "code"])
     tasks = [tuple(row) for row in instruments.itertuples(index=False, name=None)]
     if not tasks:
@@ -120,7 +124,7 @@ def _fetch_changed_prices(
                     history["exchange"] = exchange
                     history["code"] = code
                     history["price_date"] = pd.to_datetime(history["trade_date"])
-                    history["price_source"] = "AKShare_fund_etf_hist_sina"
+                    history["price_source"] = f"AKShare_{history_api}"
                     frames.append(history)
             if done_count % 50 == 0 or done_count == len(tasks):
                 print(

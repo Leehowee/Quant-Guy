@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!config/.env.example
 
 # Collected market data and generated reports
 /data/

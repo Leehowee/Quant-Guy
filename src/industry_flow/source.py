@@ -8,11 +8,10 @@ from html.parser import HTMLParser
 from typing import Callable
 from urllib.parse import urlsplit
 
-import akshare as ak
 import pandas as pd
 import requests
 
-from .config import settings
+from .config import data_sources, resolve_akshare_api, settings
 
 
 DAILY_RENAME = {
@@ -60,14 +59,12 @@ NUMERIC_COLS = [
     "small_net_inflow_ratio",
 ]
 
-EASTMONEY_DAILY_URL = "https://push2.eastmoney.com/api/qt/clist/get"
-EASTMONEY_HISTORY_URL = "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get"
+_INDUSTRY_HISTORY_SOURCE = data_sources["industry"]["history"]
+EASTMONEY_DAILY_URL = _INDUSTRY_HISTORY_SOURCE["daily_url"]
+EASTMONEY_HISTORY_URL = _INDUSTRY_HISTORY_SOURCE["history_url"]
 EASTMONEY_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-    ),
-    "Referer": "https://data.eastmoney.com/",
+    "User-Agent": _INDUSTRY_HISTORY_SOURCE["user_agent"],
+    "Referer": _INDUSTRY_HISTORY_SOURCE["referer"],
 }
 _INDUSTRY_CODES: dict[str, str] = {}
 _EASTMONEY_DIRECT = os.getenv("EASTMONEY_DIRECT", "").strip().lower() in {
@@ -263,13 +260,7 @@ def fetch_daily_industry_flow(run_date: dt.date | None = None) -> pd.DataFrame:
     return df
 
 
-THS_PERIODS = {
-    "即时": "即时",
-    "3日": "3日排行",
-    "5日": "5日排行",
-    "10日": "10日排行",
-    "20日": "20日排行",
-}
+THS_PERIODS = data_sources["industry"]["daily"]["periods"]
 
 
 def fetch_ths_industry_flow(
@@ -281,7 +272,9 @@ def fetch_ths_industry_flow(
         raise ValueError(f"Unsupported THS period: {period}")
     run_date = run_date or dt.date.today()
     raw = _retry(
-        lambda: ak.stock_fund_flow_industry(symbol=THS_PERIODS[period]),
+        lambda: resolve_akshare_api(data_sources["industry"]["daily"]["api"])(
+            symbol=THS_PERIODS[period]
+        ),
         f"AKShare THS {period} industry fund flow",
     )
     if raw is None or raw.empty:
@@ -420,7 +413,7 @@ class _IndustryPageParser(HTMLParser):
 def _fetch_industries_from_page() -> list[str]:
     global _INDUSTRY_CODES
     response = _eastmoney_get(
-        "https://data.eastmoney.com/bkzj/hy.html",
+        _INDUSTRY_HISTORY_SOURCE["industry_list_url"],
     )
     response.raise_for_status()
     response.encoding = "utf-8"
@@ -531,7 +524,7 @@ def is_cn_trade_date(date_: dt.date | None = None) -> bool:
         return False
 
     try:
-        cal = ak.tool_trade_date_hist_sina()
+        cal = resolve_akshare_api(data_sources["trade_calendar"]["api"])()
         series = pd.to_datetime(cal["trade_date"], errors="coerce").dropna().dt.date
         if series.empty:
             return True

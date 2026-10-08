@@ -8,7 +8,7 @@
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\register_daily_task.ps1
+.\bin\register_daily_task.ps1
 ```
 
 注册脚本会解析当前 `python.exe` 或 `py -3` 对应的绝对解释器路径。若 Python 不在 PATH 中，请通过 `-PythonExe` 显式传入解释器完整路径。任务使用当前用户交互会话，因此用户注销时不会后台运行。
@@ -31,7 +31,7 @@ Get-Content $log.FullName -Tail 80 -Wait
 
 ## 历史回溯
 
-`run_backfill.py` 不属于每日任务。需要时手动执行；每日快照使用独立的同花顺历史库，不依赖回溯完成状态。
+`bin/run_backfill.py` 不属于每日任务。需要时手动执行；每日快照使用独立的同花顺历史库，不依赖回溯完成状态。
 
 ## ETF 份额监控任务
 
@@ -43,7 +43,7 @@ ETF 任务每周一至周五 18:00 启动；交易日读取当天沪深 ETF 份�
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
-.\register_etf_daily_task.ps1
+.\bin\register_etf_daily_task.ps1
 ```
 
 任务名为 `EtfFlowMonitorDaily`。行情优先使用东方财富；不可用时使用新浪 ETF 报价。两者都不可用时仍保存份额数据，估算资金流留空。ETF 运行日志写入 `data\processed\etf_daily_*.log`。

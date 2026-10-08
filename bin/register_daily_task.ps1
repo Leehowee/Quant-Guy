@@ -4,8 +4,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$EntryPoint = Join-Path $ProjectRoot "run_daily.py"
+$BinDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Split-Path -Parent $BinDirectory
+$EntryPoint = Join-Path $ProjectRoot "bin\run_daily.py"
 
 if (-not (Test-Path -LiteralPath $EntryPoint)) {
     throw "Daily entry point not found: $EntryPoint"
@@ -21,7 +22,7 @@ if (-not $PythonExe -or -not (Test-Path -LiteralPath $PythonExe)) {
     throw "Could not resolve Python. Install project requirements and ensure 'python' or 'py -3' works in this PowerShell session."
 }
 
-$Runner = Join-Path $ProjectRoot "run_daily_scheduled.ps1"
+$Runner = Join-Path $ProjectRoot "bin\run_daily_scheduled.ps1"
 $PowerShellExe = (Get-Command powershell.exe).Source
 $Action = New-ScheduledTaskAction `
     -Execute $PowerShellExe `

@@ -4,8 +4,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$EntryPoint = Join-Path $ProjectRoot "run_etf_flow_daily.py"
+$BinDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectRoot = Split-Path -Parent $BinDirectory
+$EntryPoint = Join-Path $ProjectRoot "bin\run_etf_flow_daily.py"
 $LogDir = Join-Path $ProjectRoot "data\processed"
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 $LogFile = Join-Path $LogDir ("etf_daily_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))

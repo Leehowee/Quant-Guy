@@ -5,18 +5,17 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-import akshare as ak
 import pandas as pd
 
-from .config import settings
-from .dingtalk import (
+from industry_flow.config import data_sources, resolve_akshare_api, settings
+from industry_flow.dingtalk import (
     get_app_access_token,
     send_group_markdown,
     send_markdown,
     upload_image,
 )
-from .etf_report_image import render_etf_report_png
-from .storage import read_parquet_if_exists, write_parquet_atomic
+from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
+from .report_image import render_etf_report_png
 
 
 ETF_KEY = ["trade_date", "exchange", "code"]
@@ -38,7 +37,9 @@ OUTPUT_COLUMNS = [
     "price_source",
     "ingested_at",
 ]
-BOND_ETF_NAME_KEYWORDS = ("债", "短融", "城投", "科债", "存单")
+_ETF_SOURCES = data_sources["etf"]
+_TRADE_CALENDAR_API = data_sources["trade_calendar"]["api"]
+BOND_ETF_NAME_KEYWORDS = tuple(_ETF_SOURCES["filters"]["bond_name_keywords"])
 
 
 def _is_bond_etf(name: object) -> bool:
@@ -48,7 +49,7 @@ def _is_bond_etf(name: object) -> bool:
 
 
 def previous_trade_date(run_date: dt.date, calendar: pd.DataFrame | None = None) -> dt.date:
-    calendar = calendar if calendar is not None else ak.tool_trade_date_hist_sina()
+    calendar = calendar if calendar is not None else resolve_akshare_api(_TRADE_CALENDAR_API)()
     if "trade_date" not in calendar:
         raise RuntimeError("Trade calendar has no trade_date column")
     dates = pd.to_datetime(calendar["trade_date"], errors="coerce").dropna().dt.date
@@ -86,13 +87,14 @@ def fetch_shares(target_date: dt.date) -> pd.DataFrame:
     date_arg = target_date.strftime("%Y%m%d")
     errors: list[str] = []
     frames: list[pd.DataFrame] = []
+    share_sources = _ETF_SOURCES["shares"]
 
     try:
         # This is SSE's ETF scale feed. Trading currency funds are published
         # under a separate SSE scale endpoint and are outside this universe.
         sse = _request_with_retries(
             "SSE ETF shares",
-            lambda: ak.fund_etf_scale_sse(date=date_arg),
+            lambda: resolve_akshare_api(share_sources["sse_api"])(date=date_arg),
         )
         if "统计日期" not in sse.columns:
             raise RuntimeError("SSE response has no 统计日期")
@@ -107,10 +109,10 @@ def fetch_shares(target_date: dt.date) -> pd.DataFrame:
     try:
         szse = _request_with_retries(
             "SZSE ETF shares",
-            lambda: ak.fund_scale_daily_szse(
+            lambda: resolve_akshare_api(share_sources["szse_api"])(
                 start_date=date_arg,
                 end_date=date_arg,
-                symbol="ETF",
+                symbol=share_sources["szse_symbol"],
             ),
         )
         if "日期" not in szse.columns:
@@ -175,7 +177,8 @@ def fetch_closing_prices(
         return empty
 
     try:
-        spot = ak.fund_etf_spot_em()
+        primary_api = _ETF_SOURCES["prices"]["primary_api"]
+        spot = resolve_akshare_api(primary_api)()
         required = {"代码", "最新价"}
         if not required.issubset(spot.columns):
             raise RuntimeError(f"ETF spot response missing columns: {sorted(required.difference(spot.columns))}")
@@ -189,13 +192,19 @@ def fetch_closing_prices(
             raise RuntimeError("Cannot map quote codes to exchanges uniquely")
         prices = prices.merge(code_exchange, on="code", how="inner")
         prices["price_date"] = pd.Timestamp(target_date)
-        prices["price_source"] = "AKShare_fund_etf_spot_em_after_close"
+        prices["price_source"] = f"AKShare_{primary_api}_after_close"
         return prices[["exchange", "code", "close", "price_date", "price_source"]]
     except Exception as exc:
-        print(f"[etf] Eastmoney price fetch failed; trying Sina: {type(exc).__name__}: {exc}")
+        fallback = _ETF_SOURCES["prices"]
+        print(
+            f"[etf] {fallback['primary_provider']} price fetch failed; "
+            f"trying {fallback['fallback_provider']}: {type(exc).__name__}: {exc}"
+        )
 
     try:
-        spot = ak.fund_etf_category_sina(symbol="ETF基金")
+        fallback = _ETF_SOURCES["prices"]
+        fallback_api = fallback["fallback_api"]
+        spot = resolve_akshare_api(fallback_api)(symbol=fallback["fallback_symbol"])
         required = {"代码", "最新价"}
         if not required.issubset(spot.columns):
             raise RuntimeError(f"Sina ETF quote response missing columns: {sorted(required.difference(spot.columns))}")
@@ -213,7 +222,7 @@ def fetch_closing_prices(
             how="inner",
         )
         prices["price_date"] = pd.Timestamp(target_date)
-        prices["price_source"] = "AKShare_fund_etf_category_sina_after_close"
+        prices["price_source"] = f"AKShare_{fallback_api}_after_close"
         return prices[["exchange", "code", "close", "price_date", "price_source"]]
     except Exception as exc:
         print(f"[etf] Sina ETF price fetch failed; share data will still be saved: {type(exc).__name__}: {exc}")
@@ -497,7 +506,7 @@ def _build_message(
         history["code"] = history["code"].astype(str).str.zfill(6)
         history = history.dropna(subset=["trade_date"])
     if calendar is None:
-        calendar = ak.tool_trade_date_hist_sina()
+        calendar = resolve_akshare_api(_TRADE_CALENDAR_API)()
 
     lines = [
         f"# ETF资金流日报 {trade_date:%Y-%m-%d}",
@@ -543,7 +552,7 @@ def run_etf_daily(
     settings.ensure_dirs()
     run_date = run_date or dt.date.today()
 
-    calendar = ak.tool_trade_date_hist_sina()
+    calendar = resolve_akshare_api(_TRADE_CALENDAR_API)()
     calendar_dates = set(
         pd.to_datetime(calendar["trade_date"], errors="coerce").dropna().dt.date
     )

@@ -1,0 +1,48 @@
+{
+  "trade_calendar": {
+    "provider": "AKShare / Sina",
+    "api": "tool_trade_date_hist_sina"
+  },
+  "industry": {
+    "daily": {
+      "provider": "AKShare / Tonghuashun",
+      "api": "stock_fund_flow_industry",
+      "periods": {
+        "即时": "即时",
+        "3日": "3日排行",
+        "5日": "5日排行",
+        "10日": "10日排行",
+        "20日": "20日排行"
+      }
+    },
+    "history": {
+      "provider": "Eastmoney",
+      "industry_list_url": "https://data.eastmoney.com/bkzj/hy.html",
+      "daily_url": "https://push2.eastmoney.com/api/qt/clist/get",
+      "history_url": "https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get",
+      "referer": "https://data.eastmoney.com/",
+      "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    }
+  },
+  "etf": {
+    "shares": {
+      "sse_provider": "Shanghai Stock Exchange via AKShare",
+      "sse_api": "fund_etf_scale_sse",
+      "szse_provider": "Shenzhen Stock Exchange via AKShare",
+      "szse_api": "fund_scale_daily_szse",
+      "szse_symbol": "ETF"
+    },
+    "prices": {
+      "primary_provider": "Eastmoney via AKShare",
+      "primary_api": "fund_etf_spot_em",
+      "fallback_provider": "Sina via AKShare",
+      "fallback_api": "fund_etf_category_sina",
+      "fallback_symbol": "ETF基金",
+      "history_provider": "Sina via AKShare",
+      "history_api": "fund_etf_hist_sina"
+    },
+    "filters": {
+      "bond_name_keywords": ["债", "短融", "城投", "科债", "存单"]
+    }
+  }
+}

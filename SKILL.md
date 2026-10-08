@@ -16,11 +16,11 @@ Run commands from this skill's repository directory. Use the user's configured P
 
 | User request | Command |
 | --- | --- |
-| Today's industry snapshot and descriptive features | `python run_daily.py` |
-| ETF share-change and estimated-flow snapshot | `python run_etf_flow_daily.py` |
+| Today's industry snapshot and descriptive features | `python bin/run_daily.py` |
+| ETF share-change and estimated-flow snapshot | `python bin/run_etf_flow_daily.py` |
 | Both daily datasets | Run both daily commands above |
-| Industry historical backfill | `python run_backfill.py` |
-| ETF historical backfill | `python run_etf_backfill.py --sessions 20` |
+| Industry historical backfill | `python bin/run_backfill.py` |
+| ETF historical backfill | `python bin/run_etf_backfill.py --sessions 20` |
 
 Only start a historical backfill when requested; it makes many upstream requests and can take a while. For ETF backfills, follow the user's requested range and use `--end-date YYYY-MM-DD` when they specify an end date.
 

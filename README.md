@@ -16,7 +16,7 @@ py -3 -m pip install -r requirements.txt
 
 重启或刷新 Codex 后，可在请求中使用 `$a-share-fund-flow`，例如：
 
-> 用 $a-share-fund-flow 生成今天的行业和 ETF 资金流统计。
+> 用 $a-share-fund-flow 生成今天的行业和 ETF 资金流统计，只保存本地结果，不要发送钉钉。
 
 也可以不通过 Skill，直接运行下方 Python 命令。
 
@@ -35,35 +35,52 @@ py -3 -m pip install -r requirements.txt
 - 按 `份额变化 × 收盘价` 估算净申购/赎回金额，结果不是实际现金流。
 - 不纳入上交所交易型货币 ETF；按基金名称排除债券类 ETF。
 
+## 数据源与可更新配置
+
+当前数据源清单保存在 [`config/data_sources.json`](config/data_sources.json)，Python 启动时会读取它。可在该文件中更新 AKShare API 名称、同花顺周期映射、东方财富地址、交易所份额接口、ETF 报价接口与债券名称过滤词。
+
+| 数据 | 当前来源与接口 |
+| --- | --- |
+| 行业每日快照 | 同花顺，经 AKShare `stock_fund_flow_industry` 获取即时、3、5、10、20 日排名 |
+| 行业历史回溯 | 东方财富行业列表页 `data.eastmoney.com/bkzj/hy.html`，以及 `push2.eastmoney.com` 和 `push2his.eastmoney.com` 行情接口 |
+| 交易日历 | AKShare `tool_trade_date_hist_sina` |
+| ETF 份额 | 上交所 AKShare `fund_etf_scale_sse`；深交所 AKShare `fund_scale_daily_szse` |
+| ETF 当日价格 | 首选东方财富 AKShare `fund_etf_spot_em`；失败时回退新浪 `fund_etf_category_sina` |
+| ETF 历史价格 | 新浪 AKShare `fund_etf_hist_sina` |
+
+配置里的 API 名称和 URL 会在程序下次启动时读取。若上游接口的参数或返回列发生变化，还需要同步调整 `src/industry_flow/source.py` 或 `src/etf_flow/` 中对应的数据解析代码。
+
+目录职责：`bin/` 放命令行入口和 Windows 定时任务脚本；`config/` 放环境变量模板和数据源配置；`src/industry_flow/` 放行业统计；`src/etf_flow/` 放 ETF 统计。
+
 ## 手动运行
 
 在仓库目录执行：
 
 ```powershell
 # 行业资金流每日快照与特征
-py -3 run_daily.py
+py -3 bin/run_daily.py
 
 # ETF 份额变化与净申购估算
-py -3 run_etf_flow_daily.py
+py -3 bin/run_etf_flow_daily.py
 
 # 行业历史数据回溯（请求量较大）
-py -3 run_backfill.py
+py -3 bin/run_backfill.py
 
 # 回溯最近 20 个 ETF 交易日
-py -3 run_etf_backfill.py --sessions 20
+py -3 bin/run_etf_backfill.py --sessions 20
 ```
 
 指定 ETF 回溯结束日：
 
 ```powershell
-py -3 run_etf_backfill.py --sessions 20 --end-date 2026-10-07
+py -3 bin/run_etf_backfill.py --sessions 20 --end-date 2026-10-07
 ```
 
 日报命令默认只采集、保存并在终端显示，不会发送钉钉消息。只有用户明确要求发送时才添加 `--send`：
 
 ```powershell
-py -3 run_daily.py --send
-py -3 run_etf_flow_daily.py --send
+py -3 bin/run_daily.py --send
+py -3 bin/run_etf_flow_daily.py --send
 ```
 
 若明确要求重发已发送的行业日报，可用 `--send --force-send`。ETF 命令也支持 `--force-send`。行业与 ETF 回溯会访问上游数据源并写入本地历史文件，运行耗时取决于请求数量和网络情况。
@@ -76,7 +93,11 @@ Python 3.10 或更新版本。安装依赖：
 py -3 -m pip install -r requirements.txt
 ```
 
-钉钉推送可选。复制 `.env.example` 为 `.env`，只在本地填写所需的机器人配置。`.env`、本地行情数据、日志和报告已列入 `.gitignore`。
+钉钉推送可选。将 `config/.env.example` 复制为仓库根目录的 `.env`，只在本地填写所需的机器人配置。`.env`、本地行情数据、日志和报告已列入 `.gitignore`。
+
+```powershell
+Copy-Item config/.env.example .env
+```
 
 常用变量：
 
@@ -88,6 +109,7 @@ py -3 -m pip install -r requirements.txt
 | `DINGTALK_WEBHOOK` | 可选的钉钉群机器人 Webhook |
 | `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_OPEN_CONVERSATION_ID` | 可选的钉钉应用机器人图片推送配置 |
 | `EASTMONEY_DIRECT` | 是否绕过 Python 代理环境变量直连东方财富，默认 `0` |
+| `DATA_SOURCE_CONFIG` | 数据源 JSON 路径，默认 `config/data_sources.json` |
 
 ## 输出
 
@@ -99,7 +121,7 @@ py -3 -m pip install -r requirements.txt
 
 ## Windows 定时任务（可选）
 
-在 PowerShell 中运行 `register_daily_task.ps1` 和/或 `register_etf_daily_task.ps1` 可注册工作日 18:00 任务。定时脚本会显式启用 `--send`；若不希望推送，请直接使用 Python 命令，或不要注册定时任务。
+在 PowerShell 中运行 `bin/register_daily_task.ps1` 和/或 `bin/register_etf_daily_task.ps1` 可注册工作日 18:00 任务。定时脚本会显式启用 `--send`；若不希望推送，请直接使用 Python 命令，或不要注册定时任务。
 
 ## 数据与使用限制
 
