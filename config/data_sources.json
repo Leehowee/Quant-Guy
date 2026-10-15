@@ -25,8 +25,11 @@
     }
   },
   "market": {
-    "provider": "AKShare / Eastmoney",
+    "provider": "AKShare / Eastmoney with Tencent fallback",
     "breadth_api": "stock_zh_a_spot_em",
+    "breadth_fallback": "tencent",
+    "tencent_use_environment_proxy": false,
+    "tencent_workers": 5,
     "index_api": "stock_zh_index_daily_em",
     "index_symbol": "sh000001",
     "index_history_api": "stock_zh_index_daily",

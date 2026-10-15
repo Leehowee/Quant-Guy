@@ -48,11 +48,35 @@ class MarketSnapshotTests(unittest.TestCase):
             "stock_zh_index_daily_em": lambda **_: index,
             "stock_zh_index_daily": lambda **_: index,
         }
-        with patch("industry_flow.config.resolve_akshare_api", side_effect=lambda name: endpoints[name]):
+        with (
+            patch("industry_flow.config.resolve_akshare_api", side_effect=lambda name: endpoints[name]),
+            patch("industry_flow.market_snapshot.fetch_tencent_a_share_spot", side_effect=RuntimeError("fallback unavailable")),
+        ):
             snapshot = capture_market_snapshot(target).iloc[0]
         self.assertTrue(pd.isna(snapshot["advancer_ratio"]))
         self.assertIn("market_breadth_unavailable", snapshot["source"])
         self.assertEqual(snapshot["trade_date"], target.isoformat())
+
+    def test_capture_uses_tencent_breadth_when_eastmoney_fails(self):
+        target = date(2026, 10, 15)
+        dates = [target - timedelta(days=19 - index) for index in range(20)]
+        index = pd.DataFrame({"date": [day.isoformat() for day in dates], "close": range(100, 120)})
+        endpoints = {
+            "stock_zh_a_spot_em": lambda: (_ for _ in ()).throw(RuntimeError("Eastmoney unavailable")),
+            "stock_zh_index_daily_em": lambda **_: index,
+            "stock_zh_index_daily": lambda **_: index,
+        }
+        tencent = pd.DataFrame({"code": ["sh600001", "sz000001", "sh600002"], "zdf": [1.2, 0, -0.5]})
+        with (
+            patch("industry_flow.config.resolve_akshare_api", side_effect=lambda name: endpoints[name]),
+            patch("industry_flow.market_snapshot.fetch_tencent_a_share_spot", return_value=tencent) as fallback,
+        ):
+            snapshot = capture_market_snapshot(target).iloc[0]
+
+        fallback.assert_called_once()
+        self.assertAlmostEqual(snapshot["advancer_ratio"], 1 / 3)
+        self.assertEqual(snapshot["breadth_count"], 3)
+        self.assertIn("Tencent_stock_zh_a_spot_tx_direct", snapshot["source"])
 
     def test_market_summary_reports_regime_breadth_and_index_trend(self):
         target = date(2026, 10, 15)

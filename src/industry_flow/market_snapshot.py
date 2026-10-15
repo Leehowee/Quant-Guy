@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .market_breadth import fetch_tencent_a_share_spot
 from .trading_rules import assess_market
 
 
@@ -74,11 +75,16 @@ def build_market_snapshot(
     index_history: pd.DataFrame,
     *,
     index_source: str = "stock_zh_index_daily_em",
+    breadth_source: str = "stock_zh_a_spot_em",
 ) -> pd.DataFrame:
     """Build one market row, retaining index evidence when breadth is unavailable."""
+    breadth_column = next(
+        (column for column in ("涨跌幅", "zdf") if column in breadth.columns),
+        None,
+    )
     changes = (
-        pd.to_numeric(breadth["涨跌幅"], errors="coerce").dropna()
-        if "涨跌幅" in breadth.columns
+        pd.to_numeric(breadth[breadth_column], errors="coerce").dropna()
+        if breadth_column is not None
         else pd.Series(dtype=float)
     )
     required_index = {"date", "close"}
@@ -104,9 +110,9 @@ def build_market_snapshot(
         "captured_at": dt.datetime.now().isoformat(timespec="seconds"),
         "date_confidence": "盘后采集日期推定" if not changes.empty else "指数日线日期匹配；市场宽度缺失",
         "source": (
-            f"AKShare_stock_zh_a_spot_em+{index_source}"
+            f"{breadth_source}+{index_source}"
             if not changes.empty
-            else f"AKShare_{index_source}; market_breadth_unavailable"
+            else f"{index_source}; market_breadth_unavailable"
         ),
     }])
 
@@ -158,11 +164,31 @@ def capture_market_snapshot(trade_date: dt.date) -> pd.DataFrame:
     source = data_sources.get("market", {})
     errors: list[str] = []
     breadth = pd.DataFrame()
+    breadth_source = ""
     try:
         breadth_api = resolve_akshare_api(source.get("breadth_api", "stock_zh_a_spot_em"))
         breadth = breadth_api()
+        if _market_breadth_changes(breadth).empty:
+            raise RuntimeError("no valid涨跌幅 rows")
+        breadth_source = f"AKShare_{source.get('breadth_api', 'stock_zh_a_spot_em')}"
     except Exception as exc:
         errors.append(f"market breadth {type(exc).__name__}")
+        breadth = pd.DataFrame()
+
+    if breadth.empty and source.get("breadth_fallback", "tencent") == "tencent":
+        try:
+            breadth = fetch_tencent_a_share_spot(
+                use_environment_proxy=bool(
+                    source.get("tencent_use_environment_proxy", False)
+                ),
+                max_workers=int(source.get("tencent_workers", 5)),
+            )
+            if _market_breadth_changes(breadth).empty:
+                raise RuntimeError("no valid Tencent zdf rows")
+            breadth_source = "Tencent_stock_zh_a_spot_tx_direct"
+        except Exception as exc:
+            errors.append(f"market breadth Tencent {type(exc).__name__}")
+            breadth = pd.DataFrame()
 
     index_history = pd.DataFrame()
     index_api_used = ""
@@ -191,7 +217,21 @@ def capture_market_snapshot(trade_date: dt.date) -> pd.DataFrame:
         breadth,
         index_history,
         index_source=index_api_used,
+        breadth_source=breadth_source or "market_breadth_unavailable",
     )
+
+
+def _market_breadth_changes(breadth: pd.DataFrame) -> pd.Series:
+    """Return valid per-stock change values from supported spot schemas."""
+    if breadth is None or breadth.empty:
+        return pd.Series(dtype=float)
+    column = next(
+        (name for name in ("涨跌幅", "zdf") if name in breadth.columns),
+        None,
+    )
+    if column is None:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(breadth[column], errors="coerce").dropna()
 
 
 def save_market_snapshot(snapshot: pd.DataFrame, processed_dir: Path | None = None) -> Path:
