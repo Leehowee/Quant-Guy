@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,7 @@ from industry_flow.dingtalk import (
 )
 from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
 from .report_image import render_etf_report_png
+from .trade_review import build_trade_review, save_trade_review
 
 
 ETF_KEY = ["trade_date", "exchange", "code"]
@@ -164,70 +166,89 @@ def fetch_closing_prices(
     run_date: dt.date,
     universe: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Use the live ETF quote as the target day's closing price after market close."""
-    now = dt.datetime.now()
-    empty = pd.DataFrame(
-        columns=["exchange", "code", "close", "price_date", "price_source"]
+    """Fetch the target trading day's unadjusted close from daily history."""
+    del run_date  # Scheduled data is always for a completed trading day.
+    return _fetch_historical_closing_prices(target_date, universe)
+
+
+def _fetch_historical_closing_prices(
+    target_date: dt.date,
+    universe: pd.DataFrame,
+) -> pd.DataFrame:
+    """Fetch target-date closes; scheduled runs never use live quotes."""
+    columns = ["exchange", "code", "close", "price_date", "price_source"]
+    pairs = universe[["exchange", "code"]].copy()
+    pairs["code"] = (
+        pairs["code"]
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.zfill(6)
     )
-    if run_date != dt.date.today() or target_date != run_date:
-        print("[etf] price skipped: live quotes are only valid for today's target date")
-        return empty
-    if now.time() < dt.time(15, 5):
-        print("[etf] price skipped: market close is not confirmed yet (before 15:05)")
-        return empty
+    pairs = pairs.drop_duplicates(["exchange", "code"])
+    if pairs.empty:
+        return pd.DataFrame(columns=columns)
 
-    try:
-        primary_api = _ETF_SOURCES["prices"]["primary_api"]
-        spot = resolve_akshare_api(primary_api)()
-        required = {"代码", "最新价"}
-        if not required.issubset(spot.columns):
-            raise RuntimeError(f"ETF spot response missing columns: {sorted(required.difference(spot.columns))}")
-        prices = spot.rename(columns={"代码": "code", "最新价": "close"})[["code", "close"]].copy()
-        prices["code"] = prices["code"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
-        prices["close"] = pd.to_numeric(prices["close"], errors="coerce")
-        prices = prices.dropna(subset=["close"])
-        prices = prices[prices["close"] > 0].drop_duplicates("code", keep="last")
-        code_exchange = universe[["code", "exchange"]].drop_duplicates()
-        if code_exchange["code"].duplicated().any():
-            raise RuntimeError("Cannot map quote codes to exchanges uniquely")
-        prices = prices.merge(code_exchange, on="code", how="inner")
-        prices["price_date"] = pd.Timestamp(target_date)
-        prices["price_source"] = f"AKShare_{primary_api}_after_close"
-        return prices[["exchange", "code", "close", "price_date", "price_source"]]
-    except Exception as exc:
-        fallback = _ETF_SOURCES["prices"]
-        print(
-            f"[etf] {fallback['primary_provider']} price fetch failed; "
-            f"trying {fallback['fallback_provider']}: {type(exc).__name__}: {exc}"
+    history_api = resolve_akshare_api(
+        _ETF_SOURCES["prices"].get("history_api", "fund_etf_hist_sina")
+    )
+    market_prefix = {"SSE": "sh", "SZSE": "sz"}
+
+    def fetch_one(exchange: str, code: str) -> dict[str, object] | None:
+        prefix = market_prefix.get(exchange)
+        if prefix is None:
+            raise ValueError(f"Unsupported ETF exchange: {exchange}")
+        symbol = f"{prefix}{code}"
+        raw = _request_with_retries(
+            f"ETF historical close {symbol}",
+            lambda: history_api(symbol=symbol),
         )
+        if raw.empty or not {"date", "close"}.issubset(raw.columns):
+            return None
+        dates = pd.to_datetime(raw["date"], errors="coerce").dt.date
+        rows = raw.loc[dates.eq(target_date)]
+        if rows.empty:
+            return None
+        close = pd.to_numeric(rows.iloc[-1]["close"], errors="coerce")
+        if pd.isna(close) or float(close) <= 0:
+            return None
+        return {
+            "exchange": exchange,
+            "code": code,
+            "close": float(close),
+            "price_date": pd.Timestamp(target_date),
+            "price_source": "AKShare_fund_etf_hist_sina",
+        }
 
-    try:
-        fallback = _ETF_SOURCES["prices"]
-        fallback_api = fallback["fallback_api"]
-        spot = resolve_akshare_api(fallback_api)(symbol=fallback["fallback_symbol"])
-        required = {"代码", "最新价"}
-        if not required.issubset(spot.columns):
-            raise RuntimeError(f"Sina ETF quote response missing columns: {sorted(required.difference(spot.columns))}")
-        prices = spot.rename(columns={"代码": "source_code", "最新价": "close"})[["source_code", "close"]].copy()
-        prices["source_code"] = prices["source_code"].astype(str).str.lower()
-        prices["code"] = prices["source_code"].str[-6:]
-        prices["exchange"] = prices["source_code"].str[:2].map({"sh": "SSE", "sz": "SZSE"})
-        prices["close"] = pd.to_numeric(prices["close"], errors="coerce")
-        prices = prices.dropna(subset=["close", "exchange"])
-        prices = prices[prices["close"] > 0]
-        prices = prices.drop_duplicates(["exchange", "code"], keep="last")
-        prices = prices.merge(
-            universe[["exchange", "code"]].drop_duplicates(),
-            on=["exchange", "code"],
-            how="inner",
-        )
-        prices["price_date"] = pd.Timestamp(target_date)
-        prices["price_source"] = f"AKShare_{fallback_api}_after_close"
-        return prices[["exchange", "code", "close", "price_date", "price_source"]]
-    except Exception as exc:
-        print(f"[etf] Sina ETF price fetch failed; share data will still be saved: {type(exc).__name__}: {exc}")
-        return empty
+    records: list[dict[str, object]] = []
+    errors: list[str] = []
+    jobs = pairs.to_dict("records")
+    with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+        futures = {
+            pool.submit(fetch_one, job["exchange"], job["code"]): (
+                job["exchange"],
+                job["code"],
+            )
+            for job in jobs
+        }
+        for future in as_completed(futures):
+            exchange, code = futures[future]
+            try:
+                record = future.result()
+                if record is not None:
+                    records.append(record)
+            except Exception as exc:
+                errors.append(f"{exchange}/{code}: {type(exc).__name__}: {exc}")
 
+    prices = pd.DataFrame.from_records(records, columns=columns)
+    print(
+        f"[etf] historical closes for {target_date}: "
+        f"{len(prices)}/{len(jobs)}; failures={len(errors)}"
+    )
+    if errors:
+        print("[etf] historical close errors: " + " | ".join(errors[:5]))
+    if prices.empty:
+        raise RuntimeError(f"No historical ETF closing prices returned for {target_date}")
+    return prices
 
 def _history_file() -> Path:
     return settings.processed_dir / "etf_flow_history.parquet"
@@ -559,7 +580,7 @@ def run_etf_daily(
     if run_date not in calendar_dates and not allow_non_trading_day:
         print(f"[etf] {run_date} is not a CN trading day; skip")
         return None
-    target_date = run_date
+    target_date = previous_trade_date(run_date, calendar)
     print(f"[etf] run_date={run_date}; target_trade_date={target_date}")
 
     current = fetch_shares(target_date)
@@ -609,6 +630,40 @@ def run_etf_daily(
     print(f"[etf] daily file saved: {daily_path}")
     print(f"[etf] history saved: {_history_file()}")
 
+    market_path = settings.processed_dir / "market_regime_history.csv"
+    try:
+        if market_path.exists():
+            market_history = pd.read_csv(market_path)
+        else:
+            market_history = pd.DataFrame(
+                columns=["trade_date", "index_close", "index_sma20", "advancer_ratio"]
+            )
+        trade_review, market_summary = build_trade_review(
+            updated_history,
+            market_history,
+            target_date,
+            calendar,
+        )
+    except Exception as exc:
+        # Never let a broken auxiliary market source suppress the base ETF report.
+        trade_review = pd.DataFrame(
+            columns=["qualified_candidate", "name", "flow_to_estimated_value_pct_5d"]
+        )
+        market_summary = f"市场状态：数据不足；权益仓位上限 0%（{type(exc).__name__}）"
+    review_path = save_trade_review(trade_review, target_date, settings.processed_dir)
+    qualified = (
+        trade_review.loc[trade_review["qualified_candidate"]].head(3)
+        if not trade_review.empty
+        else pd.DataFrame()
+    )
+    candidate_names = "、".join(qualified["name"].astype(str)) if not qualified.empty else "无"
+    review_message = (
+        f"\n\n【交易候选观察（不自动下单）】\n{market_summary}\n"
+        f"满足资金持续、趋势和相对强度条件的 ETF：{candidate_names}\n"
+        f"完整观察表：{review_path.name}。份额变化乘以收盘价为估算值。"
+    )
+    print(review_message)
+
     if previous.empty:
         print("[etf] no earlier trading-day snapshot; saved baseline only, no DingTalk message")
         return df
@@ -621,6 +676,7 @@ def run_etf_daily(
         calendar=calendar,
         summaries=summaries,
     )
+    message += review_message
     print(message)
     if send_dingtalk:
         if settings.dingtalk_app_configured and not settings.dingtalk_app_ready:
@@ -642,7 +698,7 @@ def run_etf_daily(
                     settings.dingtalk_client_secret,
                 )
                 media_id = upload_image(access_token, image_path)
-                image_message = f"![{title}]({media_id})"
+                image_message = f"![{title}]({media_id}){review_message}"
                 try:
                     send_group_markdown(
                         access_token,

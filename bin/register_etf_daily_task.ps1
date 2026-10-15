@@ -28,7 +28,7 @@ if (-not $PythonExe -or -not (Test-Path -LiteralPath $PythonExe)) {
     throw "Could not resolve Python. Install project requirements and ensure 'python' or 'py -3' works in this PowerShell session."
 }
 
-$Runner = Join-Path $ProjectRoot "bin\run_etf_daily_scheduled.ps1"
+$Runner = Join-Path $ProjectRoot "run_etf_daily_scheduled.ps1"
 $PowerShellExe = (Get-Command powershell.exe).Source
 $Action = New-ScheduledTaskAction `
     -Execute $PowerShellExe `
@@ -37,7 +37,7 @@ $Action = New-ScheduledTaskAction `
 $Trigger = New-ScheduledTaskTrigger `
     -Weekly `
     -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `
-    -At "6:00PM"
+    -At "8:00AM"
 $Principal = New-ScheduledTaskPrincipal `
     -UserId ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME) `
     -LogonType Interactive `
@@ -53,9 +53,9 @@ Register-ScheduledTask `
     -Trigger $Trigger `
     -Principal $Principal `
     -Settings $Settings `
-    -Description "Fetch prior-trading-day SSE/SZSE ETF shares at 18:00, save by data date, and send the DingTalk report on trading days." `
+    -Description "Fetch prior-trading-day SSE/SZSE ETF shares at 08:00, save by data date, and send the DingTalk report on trading days." `
     -Force | Out-Null
 
-Write-Output "Registered '$TaskName' for weekdays at 18:00. The program skips exchange holidays."
+Write-Output "Registered '$TaskName' for weekdays at 08:00. The program skips exchange holidays."
 Write-Output "Python: $PythonExe"
 Write-Output "Project: $ProjectRoot"

@@ -24,6 +24,12 @@
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
     }
   },
+  "market": {
+    "provider": "AKShare / Eastmoney",
+    "breadth_api": "stock_zh_a_spot_em",
+    "index_api": "stock_zh_index_daily_em",
+    "index_symbol": "sh000001"
+  },
   "etf": {
     "shares": {
       "sse_provider": "Shanghai Stock Exchange via AKShare",

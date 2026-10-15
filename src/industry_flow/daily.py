@@ -8,6 +8,7 @@ from .digest import build_ths_period_digest
 from .dingtalk import send_group_image_markdown
 from .features import build_features
 from .industry_report_image import render_industry_report_png
+from .market_snapshot import capture_market_snapshot, save_market_snapshot
 from .source import (
     THS_PERIODS,
     fetch_ths_industry_flow,
@@ -44,6 +45,14 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
             f"Incomplete THS periods: expected {list(THS_PERIODS)}, "
             f"received {sorted(received_periods)}"
         )
+
+    try:
+        market_snapshot = capture_market_snapshot(today)
+        market_path = save_market_snapshot(market_snapshot)
+        print(f"[daily] market regime snapshot saved: {market_path}")
+    except Exception as exc:
+        # A market-source outage should not discard a complete industry report.
+        print(f"[daily] market regime unavailable: {type(exc).__name__}: {exc}")
 
     raw_file = (
         settings.raw_daily_dir
