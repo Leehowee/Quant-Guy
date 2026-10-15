@@ -17,7 +17,12 @@ from industry_flow.dingtalk import (
 )
 from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
 from .report_image import render_etf_report_png
-from .report_context import RISK_PANEL_LINES, build_holder_panel_lines
+from .report_context import (
+    RISK_PANEL_LINES,
+    build_holder_panel_lines,
+    build_next_day_decision_rows,
+    format_next_day_decision_markdown,
+)
 from .trade_review import build_candidate_summary, build_trade_review, save_trade_review
 
 
@@ -659,10 +664,21 @@ def run_etf_daily(
     )
     candidate_names = "、".join(qualified["name"].astype(str)) if not qualified.empty else "无"
     candidate_summary = build_candidate_summary(trade_review)
+    holder_lines = build_holder_panel_lines(
+        Path(__file__).resolve().parents[2] / "config",
+        as_of=target_date,
+    )
+    decision_rows = build_next_day_decision_rows(
+        trade_review,
+        market_summary,
+        holder_lines,
+    )
+    decision_markdown = format_next_day_decision_markdown(decision_rows, run_date)
     review_message = (
         f"\n\n【交易候选观察（不自动下单）】\n{market_summary}\n"
         f"满足资金持续、趋势和相对强度条件的 ETF：{candidate_names}\n"
-        f"完整观察表：{review_path.name}。份额变化乘以收盘价为估算值。"
+        f"完整观察表：{review_path.name}。份额变化乘以收盘价为估算值。\n\n"
+        f"{decision_markdown}"
     )
     print(review_message)
 
@@ -681,10 +697,6 @@ def run_etf_daily(
     message += review_message
     print(message)
     image_path = settings.reports_dir / f"etf_flow_{target_date:%Y%m%d}.png"
-    holder_lines = build_holder_panel_lines(
-        Path(__file__).resolve().parents[2] / "config",
-        as_of=target_date,
-    )
     render_etf_report_png(
         summaries,
         target_date,
@@ -693,6 +705,8 @@ def run_etf_daily(
         candidate_summary=candidate_summary,
         risk_lines=list(RISK_PANEL_LINES),
         holder_lines=holder_lines,
+        decision_rows=decision_rows,
+        decision_date=run_date,
     )
     print(f"[etf] infographic saved: {image_path}")
     if send_dingtalk:

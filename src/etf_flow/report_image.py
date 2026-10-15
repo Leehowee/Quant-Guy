@@ -79,6 +79,51 @@ def _info_card(
             current_y += font_size + 5
 
 
+def _decision_table(
+    draw: ImageDraw.ImageDraw,
+    *,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    rows: list[dict[str, str]],
+    decision_date: dt.date,
+) -> None:
+    draw.rounded_rectangle((x, y, x + w, y + h), radius=18, fill=CARD, outline=LINE, width=2)
+    draw.text(
+        (x + 20, y + 12),
+        f"{decision_date:%Y-%m-%d} 交易决策表",
+        font=_font(21, True),
+        fill=INK,
+    )
+    label_x = x + 22
+    value_x = x + 205
+    value_width = w - 230
+    header_y = y + 47
+    draw.text((label_x, header_y), "栏目", font=_font(15, True), fill=BLUE)
+    draw.text((value_x, header_y), "每日判断与执行条件", font=_font(15, True), fill=BLUE)
+    draw.line((x + 18, header_y + 24, x + w - 18, header_y + 24), fill=LINE, width=1)
+
+    font = _font(14)
+    current_y = header_y + 34
+    max_y = y + h - 10
+    for index, row in enumerate(rows):
+        wrapped = _wrapped_lines(draw, row.get("answer", ""), font, value_width)
+        if len(wrapped) > 3:
+            wrapped = wrapped[:3]
+            wrapped[-1] = _fit_text(draw, wrapped[-1] + "…", font, value_width)
+        row_height = max(38, len(wrapped) * 18 + 8)
+        if current_y + row_height > max_y:
+            draw.text((label_x, max_y - 18), "其余决策项见钉钉文字表格", font=font, fill=MUTED)
+            return
+        draw.text((label_x, current_y), _fit_text(draw, row.get("item", ""), _font(14, True), 170), font=_font(14, True), fill=INK)
+        for line_index, line in enumerate(wrapped):
+            draw.text((value_x, current_y + line_index * 18), line, font=font, fill=MUTED)
+        current_y += row_height
+        if index < len(rows) - 1:
+            draw.line((x + 18, current_y - 3, x + w - 18, current_y - 3), fill=LINE, width=1)
+
+
 def _summary_card(
     draw: ImageDraw.ImageDraw,
     x: int,
@@ -126,12 +171,14 @@ def render_etf_report_png(
     candidate_summary: str = "暂无候选（数据不足，按规则不生成候选）。",
     risk_lines: list[str] | None = None,
     holder_lines: list[str] | None = None,
+    decision_rows: list[dict[str, str]] | None = None,
+    decision_date: dt.date | None = None,
 ) -> Path:
     section_height = 372
     header_height = 245
     footer_height = 132
     section_end = header_height + section_height * max(len(summaries), 1)
-    context_height = 482
+    context_height = 970
     height = section_end + context_height + footer_height + 18
     image = Image.new("RGB", (WIDTH, height), BACKGROUND)
     draw = ImageDraw.Draw(image)
@@ -222,6 +269,18 @@ def render_etf_report_png(
         heading="公开持仓观察",
         lines=holder_lines or ["公开持仓观察数据尚未录入。"],
         font_size=16,
+    )
+
+    _decision_table(
+        draw,
+        x=32,
+        y=lower_y + 240,
+        w=WIDTH - 64,
+        h=480,
+        rows=decision_rows or [
+            {"item": "不交易原因", "answer": "决策数据不足；暂停新开仓。"}
+        ],
+        decision_date=decision_date or trade_date,
     )
 
     footer_y = section_end + context_height + 20
