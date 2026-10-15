@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .market_snapshot import build_market_report_summary
+
 
 def _fmt_yi(value) -> str:
     if pd.isna(value):
@@ -140,6 +142,9 @@ def build_daily_digest(
 def build_ths_period_digest(
     feature_df: pd.DataFrame,
     top_n: int = 5,
+    market_snapshot: pd.DataFrame | None = None,
+    trade_date=None,
+    market_unavailable_reason: str | None = None,
 ) -> str:
     """Build one concise DingTalk message covering every stored THS horizon."""
     if feature_df.empty:
@@ -148,11 +153,23 @@ def build_ths_period_digest(
     df = feature_df.copy()
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     latest_date = df["trade_date"].max()
+    report_date = trade_date or latest_date.date()
     latest = df[df["trade_date"] == latest_date]
+    market = build_market_report_summary(
+        market_snapshot,
+        report_date,
+        unavailable_reason=market_unavailable_reason,
+    )
     periods = ["即时", "3日", "5日", "10日", "20日"]
     lines = [
         f"# 同花顺行业资金流日报 {latest_date:%Y-%m-%d}",
         "净额单位：亿元；涨跌幅单位：%。榜单按净额排序。",
+        "",
+        "### 短线市场环境过滤（仅作规则观察）",
+        market["status"],
+        market["breadth"],
+        market["trend"],
+        f"数据说明：{market['note']}",
         "",
         "| 周期 | 净流入前{n}（净额：亿元；涨跌幅：%） | 净流出前{n}（净额：亿元；涨跌幅：%） |".format(n=top_n),
         "|---|---|---|",

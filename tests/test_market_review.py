@@ -1,10 +1,18 @@
 from datetime import date, timedelta
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 import pandas as pd
+from PIL import Image
 
 from etf_flow.trade_review import build_trade_review
-from industry_flow.market_snapshot import build_market_snapshot
+from industry_flow.digest import build_ths_period_digest
+from industry_flow.industry_report_image import render_industry_report_png
+from industry_flow.market_snapshot import (
+    build_market_report_summary,
+    build_market_snapshot,
+)
 
 
 class MarketSnapshotTests(unittest.TestCase):
@@ -17,6 +25,96 @@ class MarketSnapshotTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["advancer_ratio"], 0.5)
         self.assertAlmostEqual(snapshot["index_sma20"], 109.5)
         self.assertEqual(snapshot["breadth_count"], 4)
+
+    def test_market_summary_reports_regime_breadth_and_index_trend(self):
+        target = date(2026, 10, 15)
+        snapshot = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "index_close": 4100.0,
+            "index_sma20": 4000.0,
+            "advancer_ratio": 0.6,
+            "breadth_count": 5000,
+            "captured_at": "2026-10-15T18:00:00",
+            "date_confidence": "盘后采集日期推定",
+        }])
+        summary = build_market_report_summary(snapshot, target)
+        self.assertIn("较强", summary["status"])
+        self.assertIn("60%", summary["status"])
+        self.assertIn("60.0%", summary["breadth"])
+        self.assertIn("高于20日均线", summary["trend"])
+
+    def test_market_summary_fails_closed_for_stale_or_missing_snapshot(self):
+        target = date(2026, 10, 15)
+        stale = pd.DataFrame([{
+            "trade_date": "2026-10-14",
+            "index_close": 4100.0,
+            "index_sma20": 4000.0,
+            "advancer_ratio": 0.6,
+        }])
+        stale_summary = build_market_report_summary(stale, target)
+        missing_summary = build_market_report_summary(pd.DataFrame(), target)
+        self.assertIn("数据不足", stale_summary["status"])
+        self.assertIn("不匹配", stale_summary["note"])
+        self.assertIn("数据不足", missing_summary["status"])
+
+    def test_digest_includes_market_filter_instead_of_only_collecting_it(self):
+        target = date(2026, 10, 15)
+        features = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "period": "即时",
+            "industry_name": "银行",
+            "net_amount_yi": 1.0,
+            "change_pct": 0.5,
+            "period_change_pct": 0.5,
+        }])
+        market = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "index_close": 4100.0,
+            "index_sma20": 4000.0,
+            "advancer_ratio": 0.6,
+            "breadth_count": 5000,
+            "captured_at": "2026-10-15T18:00:00",
+            "date_confidence": "盘后采集日期推定",
+        }])
+        digest = build_ths_period_digest(
+            features,
+            market_snapshot=market,
+            trade_date=target,
+        )
+        self.assertIn("短线市场环境过滤", digest)
+        self.assertIn("A股上涨比例：60.0%", digest)
+        self.assertIn("上证指数：4,100.00", digest)
+
+    def test_industry_image_reserves_a_visible_market_context_panel(self):
+        target = date(2026, 10, 15)
+        features = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "period": "即时",
+            "industry_name": "银行",
+            "net_amount_yi": 1.0,
+            "change_pct": 0.5,
+            "period_change_pct": 0.5,
+        }])
+        market = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "index_close": 4100.0,
+            "index_sma20": 4000.0,
+            "advancer_ratio": 0.6,
+            "breadth_count": 5000,
+            "captured_at": "2026-10-15T18:00:00",
+            "date_confidence": "盘后采集日期推定",
+        }])
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
+            output = Path(directory) / "industry.png"
+            render_industry_report_png(
+                features,
+                target,
+                output,
+                market_snapshot=market,
+            )
+            with Image.open(output) as image:
+                self.assertEqual(image.width, 1200)
+                self.assertEqual(image.height, 314 + 342 * 5 + 122)
 
     def test_rejects_wrong_index_date_instead_of_using_stale_data(self):
         target = date(2026, 10, 15)

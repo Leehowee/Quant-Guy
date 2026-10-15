@@ -7,6 +7,67 @@ from pathlib import Path
 
 import pandas as pd
 
+from .trading_rules import assess_market
+
+
+def build_market_report_summary(
+    snapshot: pd.DataFrame | None,
+    trade_date: dt.date,
+    unavailable_reason: str | None = None,
+) -> dict[str, str]:
+    """Format a same-day market snapshot for the industry text and image reports."""
+    unavailable = {
+        "status": "环境：数据不足 | ETF候选观察：暂停",
+        "breadth": "A股上涨比例：无法获取",
+        "trend": "上证指数20日趋势：无法获取",
+        "note": unavailable_reason or "未取得与日报日期匹配的完整市场快照。",
+    }
+    if snapshot is None or snapshot.empty:
+        return unavailable
+
+    row = snapshot.iloc[0]
+    snapshot_date = pd.to_datetime(row.get("trade_date"), errors="coerce")
+    if pd.isna(snapshot_date) or snapshot_date.date() != trade_date:
+        unavailable["note"] = unavailable_reason or (
+            f"市场快照日期与日报不匹配（期望 {trade_date.isoformat()}）。"
+        )
+        return unavailable
+
+    index_close = pd.to_numeric(row.get("index_close"), errors="coerce")
+    index_sma20 = pd.to_numeric(row.get("index_sma20"), errors="coerce")
+    advancer_ratio = pd.to_numeric(row.get("advancer_ratio"), errors="coerce")
+    assessment = assess_market(index_close, index_sma20, advancer_ratio)
+    if assessment.regime.value == "数据不足":
+        return unavailable
+
+    breadth_count = pd.to_numeric(row.get("breadth_count"), errors="coerce")
+    breadth_count_text = (
+        f"（样本 {int(breadth_count):,} 只）" if pd.notna(breadth_count) else ""
+    )
+    relation = "高于" if index_close > index_sma20 else "未高于"
+    captured_at = row.get("captured_at")
+    confidence = row.get("date_confidence")
+    footnotes = []
+    if pd.notna(captured_at):
+        footnotes.append(f"采集时间 {captured_at}")
+    if pd.notna(confidence):
+        footnotes.append(str(confidence))
+    note = "；".join(footnotes) or "日期按盘后任务日推定。"
+
+    return {
+        "status": (
+            f"环境：{assessment.regime.value} | "
+            f"策略风险敞口上限：{assessment.exposure_cap_pct:.0%}"
+        ),
+        "breadth": (
+            f"A股上涨比例：{advancer_ratio:.1%}{breadth_count_text}"
+        ),
+        "trend": (
+            f"上证指数：{index_close:,.2f}，{relation}20日均线 "
+            f"{index_sma20:,.2f}"
+        ),
+        "note": note,
+    }
 
 
 def build_market_snapshot(

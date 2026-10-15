@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 from PIL import Image, ImageDraw, ImageFont
 from .fonts import load_report_font as _font
+from .market_snapshot import build_market_report_summary
 
 
 WIDTH = 1200
@@ -102,8 +103,10 @@ def render_industry_report_png(
     trade_date: dt.date,
     output_path: Path,
     top_n: int = 5,
+    market_snapshot: pd.DataFrame | None = None,
+    market_unavailable_reason: str | None = None,
 ) -> Path:
-    """Render THS industry fund-flow rankings as a DingTalk-ready long image."""
+    """Render market context and THS industry rankings as a DingTalk-ready image."""
     if feature_df.empty:
         raise ValueError("Cannot render an industry report from an empty feature table")
     required = {"trade_date", "period", "industry_name", "net_amount_yi"}
@@ -114,14 +117,19 @@ def render_industry_report_png(
     data = feature_df.copy()
     data["trade_date"] = pd.to_datetime(data["trade_date"], errors="coerce").dt.date
     day = data[data["trade_date"] == trade_date]
+    market = build_market_report_summary(
+        market_snapshot,
+        trade_date,
+        unavailable_reason=market_unavailable_reason,
+    )
 
     margin = 32
     gutter = 18
-    header_height = 208
+    sections_y = 314
     section_height = 342
     footer_height = 122
     panel_width = (WIDTH - margin * 2 - gutter) // 2
-    height = header_height + section_height * len(PERIODS) + footer_height
+    height = sections_y + section_height * len(PERIODS) + footer_height
     image = Image.new("RGB", (WIDTH, height), BACKGROUND)
     draw = ImageDraw.Draw(image)
 
@@ -135,8 +143,41 @@ def render_industry_report_png(
         fill="#BFD0E5",
     )
 
+    market_box = (margin, 200, WIDTH - margin, 298)
+    draw.rounded_rectangle(market_box, radius=18, fill=CARD, outline=LINE, width=2)
+    market_width = WIDTH - margin * 2 - 48
+    draw.text(
+        (margin + 22, 207),
+        "短线市场环境过滤（仅作规则观察）",
+        font=_font(18, True),
+        fill=BLUE,
+    )
+    draw.text(
+        (margin + 22, 231),
+        _fit_text(draw, market["status"], _font(17, True), market_width),
+        font=_font(17, True),
+        fill=INK,
+    )
+    draw.text(
+        (margin + 22, 255),
+        _fit_text(
+            draw,
+            f"{market['breadth']}  |  {market['trend']}",
+            _font(15),
+            market_width,
+        ),
+        font=_font(15),
+        fill=INK,
+    )
+    draw.text(
+        (margin + 22, 278),
+        _fit_text(draw, market["note"], _font(12), market_width),
+        font=_font(12),
+        fill=MUTED,
+    )
+
     for index, period in enumerate(PERIODS):
-        section_y = header_height + index * section_height
+        section_y = sections_y + index * section_height
         period_rows = day[day["period"].astype(str) == period].copy()
         note = f"{period_rows['industry_name'].nunique()} 个行业 · 按净额排序" if not period_rows.empty else "本周期数据缺失"
         draw.rounded_rectangle(
@@ -188,7 +229,7 @@ def render_industry_report_png(
             top_n,
         )
 
-    footer_y = header_height + section_height * len(PERIODS) + 20
+    footer_y = sections_y + section_height * len(PERIODS) + 20
     draw.text(
         (48, footer_y),
         "资金净额及行业涨跌幅按同花顺接口口径展示。",

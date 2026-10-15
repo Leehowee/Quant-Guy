@@ -46,13 +46,19 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
             f"received {sorted(received_periods)}"
         )
 
+    market_snapshot = pd.DataFrame()
+    market_unavailable_reason = None
     try:
         market_snapshot = capture_market_snapshot(today)
-        market_path = save_market_snapshot(market_snapshot)
-        print(f"[daily] market regime snapshot saved: {market_path}")
     except Exception as exc:
-        # A market-source outage should not discard a complete industry report.
+        market_unavailable_reason = "采集失败（网络或数据源不可用）；ETF候选观察保持数据不足。"
         print(f"[daily] market regime unavailable: {type(exc).__name__}: {exc}")
+    else:
+        try:
+            market_path = save_market_snapshot(market_snapshot)
+            print(f"[daily] market regime snapshot saved: {market_path}")
+        except Exception as exc:
+            print(f"[daily] market regime snapshot could not be saved: {type(exc).__name__}: {exc}")
 
     raw_file = (
         settings.raw_daily_dir
@@ -86,6 +92,9 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
     msg = build_ths_period_digest(
         features,
         top_n=settings.digest_top_n,
+        market_snapshot=market_snapshot,
+        trade_date=today,
+        market_unavailable_reason=market_unavailable_reason,
     )
     if settings.dingtalk_keyword and settings.dingtalk_keyword not in msg:
         msg = f"{msg}\n{settings.dingtalk_keyword}"
