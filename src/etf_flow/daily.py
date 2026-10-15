@@ -17,7 +17,8 @@ from industry_flow.dingtalk import (
 )
 from industry_flow.storage import read_parquet_if_exists, write_parquet_atomic
 from .report_image import render_etf_report_png
-from .trade_review import build_trade_review, save_trade_review
+from .report_context import RISK_PANEL_LINES, build_holder_panel_lines
+from .trade_review import build_candidate_summary, build_trade_review, save_trade_review
 
 
 ETF_KEY = ["trade_date", "exchange", "code"]
@@ -652,11 +653,12 @@ def run_etf_daily(
         market_summary = f"市场状态：数据不足；权益仓位上限 0%（{type(exc).__name__}）"
     review_path = save_trade_review(trade_review, target_date, settings.processed_dir)
     qualified = (
-        trade_review.loc[trade_review["qualified_candidate"]].head(3)
+        trade_review.loc[trade_review["qualified_candidate"].fillna(False).astype(bool)].head(3)
         if not trade_review.empty
         else pd.DataFrame()
     )
     candidate_names = "、".join(qualified["name"].astype(str)) if not qualified.empty else "无"
+    candidate_summary = build_candidate_summary(trade_review)
     review_message = (
         f"\n\n【交易候选观察（不自动下单）】\n{market_summary}\n"
         f"满足资金持续、趋势和相对强度条件的 ETF：{candidate_names}\n"
@@ -678,6 +680,21 @@ def run_etf_daily(
     )
     message += review_message
     print(message)
+    image_path = settings.reports_dir / f"etf_flow_{target_date:%Y%m%d}.png"
+    holder_lines = build_holder_panel_lines(
+        Path(__file__).resolve().parents[2] / "config",
+        as_of=target_date,
+    )
+    render_etf_report_png(
+        summaries,
+        target_date,
+        image_path,
+        market_summary=market_summary,
+        candidate_summary=candidate_summary,
+        risk_lines=list(RISK_PANEL_LINES),
+        holder_lines=holder_lines,
+    )
+    print(f"[etf] infographic saved: {image_path}")
     if send_dingtalk:
         if settings.dingtalk_app_configured and not settings.dingtalk_app_ready:
             raise RuntimeError(
@@ -691,8 +708,6 @@ def run_etf_daily(
         else:
             title = f"ETF资金流日报 {target_date:%Y-%m-%d}"
             if settings.dingtalk_app_ready:
-                image_path = settings.reports_dir / f"etf_flow_{target_date:%Y%m%d}.png"
-                render_etf_report_png(summaries, target_date, image_path)
                 access_token = get_app_access_token(
                     settings.dingtalk_client_id,
                     settings.dingtalk_client_secret,
@@ -723,7 +738,6 @@ def run_etf_daily(
                         )
                     send_markdown(settings.dingtalk_webhook, title, image_message)
                     print("[etf] infographic sent via configured group webhook")
-                print(f"[etf] infographic saved: {image_path}")
             elif settings.dingtalk_webhook:
                 if settings.dingtalk_keyword and settings.dingtalk_keyword not in message:
                     message = f"{message}\n{settings.dingtalk_keyword}"

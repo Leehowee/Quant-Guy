@@ -5,13 +5,17 @@ import unittest
 
 import pandas as pd
 from PIL import Image
+from unittest.mock import patch
 
-from etf_flow.trade_review import build_trade_review
+from etf_flow.trade_review import build_candidate_summary, build_trade_review
 from industry_flow.digest import build_ths_period_digest
 from industry_flow.industry_report_image import render_industry_report_png
 from industry_flow.market_snapshot import (
+    build_market_index_backfill,
     build_market_report_summary,
     build_market_snapshot,
+    capture_market_snapshot,
+    save_market_index_backfill,
 )
 
 
@@ -25,6 +29,30 @@ class MarketSnapshotTests(unittest.TestCase):
         self.assertAlmostEqual(snapshot["advancer_ratio"], 0.5)
         self.assertAlmostEqual(snapshot["index_sma20"], 109.5)
         self.assertEqual(snapshot["breadth_count"], 4)
+
+    def test_build_market_snapshot_retains_index_when_breadth_is_unavailable(self):
+        target = date(2026, 10, 15)
+        dates = [target - timedelta(days=19 - index) for index in range(20)]
+        index = pd.DataFrame({"date": [day.isoformat() for day in dates], "close": range(100, 120)})
+        snapshot = build_market_snapshot(target, pd.DataFrame(), index).iloc[0]
+        self.assertAlmostEqual(snapshot["index_sma20"], 109.5)
+        self.assertTrue(pd.isna(snapshot["advancer_ratio"]))
+        self.assertIn("宽度缺失", snapshot["date_confidence"])
+
+    def test_capture_keeps_index_when_breadth_endpoint_fails(self):
+        target = date(2026, 10, 15)
+        dates = [target - timedelta(days=19 - index) for index in range(20)]
+        index = pd.DataFrame({"date": [day.isoformat() for day in dates], "close": range(100, 120)})
+        endpoints = {
+            "stock_zh_a_spot_em": lambda: (_ for _ in ()).throw(RuntimeError("breadth unavailable")),
+            "stock_zh_index_daily_em": lambda **_: index,
+            "stock_zh_index_daily": lambda **_: index,
+        }
+        with patch("industry_flow.config.resolve_akshare_api", side_effect=lambda name: endpoints[name]):
+            snapshot = capture_market_snapshot(target).iloc[0]
+        self.assertTrue(pd.isna(snapshot["advancer_ratio"]))
+        self.assertIn("market_breadth_unavailable", snapshot["source"])
+        self.assertEqual(snapshot["trade_date"], target.isoformat())
 
     def test_market_summary_reports_regime_breadth_and_index_trend(self):
         target = date(2026, 10, 15)
@@ -56,6 +84,20 @@ class MarketSnapshotTests(unittest.TestCase):
         self.assertIn("数据不足", stale_summary["status"])
         self.assertIn("不匹配", stale_summary["note"])
         self.assertIn("数据不足", missing_summary["status"])
+
+    def test_partial_market_summary_keeps_known_index_trend_visible(self):
+        target = date(2026, 10, 15)
+        snapshot = pd.DataFrame([{
+            "trade_date": target.isoformat(),
+            "index_close": 3900.0,
+            "index_sma20": 4000.0,
+            "advancer_ratio": pd.NA,
+        }])
+        summary = build_market_report_summary(snapshot, target)
+        self.assertIn("数据不足", summary["status"])
+        self.assertIn("无法获取", summary["breadth"])
+        self.assertIn("未高于20日均线", summary["trend"])
+        self.assertIn("4,000.00", summary["trend"])
 
     def test_digest_includes_market_filter_instead_of_only_collecting_it(self):
         target = date(2026, 10, 15)
@@ -123,6 +165,36 @@ class MarketSnapshotTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "complete 20-session"):
             build_market_snapshot(target, pd.DataFrame({"涨跌幅": [1.0]}), index)
 
+    def test_index_backfill_keeps_breadth_unknown_and_preserves_captured_breadth(self):
+        dates = [date(2026, 8, 1) + timedelta(days=index) for index in range(45)]
+        history = pd.DataFrame({"date": dates, "close": [100 + index for index in range(45)]})
+        target = dates[-1]
+        backfill = build_market_index_backfill(history, target, sessions=20)
+        self.assertEqual(len(backfill), 20)
+        self.assertEqual(backfill.iloc[-1]["trade_date"], target.isoformat())
+        self.assertTrue(pd.isna(backfill.iloc[-1]["advancer_ratio"]))
+        self.assertAlmostEqual(backfill.iloc[-1]["index_sma20"], sum(range(125, 145)) / 20)
+
+        with TemporaryDirectory(dir=Path.cwd()) as directory:
+            processed = Path(directory)
+            existing = pd.DataFrame([{
+                "trade_date": target.isoformat(),
+                "index_close": 1.0,
+                "index_sma20": 1.0,
+                "advancer_ratio": 0.62,
+                "breadth_count": 5000,
+                "captured_at": "2026-09-14T18:00:00",
+                "date_confidence": "盘后实采",
+                "source": "market snapshot",
+            }])
+            existing.to_csv(processed / "market_regime_history.csv", index=False)
+            save_market_index_backfill(backfill.tail(1), processed)
+            saved = pd.read_csv(processed / "market_regime_history.csv")
+
+        self.assertAlmostEqual(saved.iloc[0]["advancer_ratio"], 0.62)
+        self.assertEqual(saved.iloc[0]["date_confidence"], "盘后实采")
+        self.assertAlmostEqual(saved.iloc[0]["index_close"], 144.0)
+
 
 class TradeReviewTests(unittest.TestCase):
     def setUp(self):
@@ -156,6 +228,21 @@ class TradeReviewTests(unittest.TestCase):
         self.assertTrue(bool(result.iloc[0]["qualified_candidate"]))
         self.assertIn("较强", summary)
 
+    def test_candidate_summary_exposes_filter_counts_when_market_blocks_entries(self):
+        review = pd.DataFrame([{
+            "qualified_candidate": False,
+            "name": "沪深300ETF",
+            "flow_pass_5d": True,
+            "trend_pass_20d": True,
+            "relative_strength_pass_10d": False,
+            "market_regime": "数据不足",
+        }])
+        summary = build_candidate_summary(review)
+        self.assertIn("5日资金通过 1 只", summary)
+        self.assertIn("20日趋势通过 1 只", summary)
+        self.assertIn("市场过滤为“数据不足”", summary)
+        self.assertIn("近10日跑赢上证", summary)
+
     def test_absent_market_snapshot_fails_closed(self):
         result, summary = build_trade_review(self.etf, self.market.iloc[:-1], self.target, self.calendar)
         self.assertTrue(result.empty)
@@ -164,6 +251,16 @@ class TradeReviewTests(unittest.TestCase):
     def test_incomplete_etf_history_cannot_become_candidate(self):
         result, _ = build_trade_review(self.etf.iloc[:-1], self.market, self.target, self.calendar)
         self.assertFalse(bool(result.iloc[0]["qualified_candidate"]))
+
+    def test_index_history_without_market_breadth_still_fails_closed(self):
+        market = self.market.copy()
+        market.loc[market["trade_date"].eq(self.target.isoformat()), "advancer_ratio"] = pd.NA
+        result, summary = build_trade_review(self.etf, market, self.target, self.calendar)
+        self.assertFalse(bool(result.iloc[0]["qualified_candidate"]))
+        self.assertEqual(result.iloc[0]["market_regime"], "数据不足")
+        self.assertIn("数据不足", summary)
+        self.assertIn("上涨家数占比缺失", summary)
+        self.assertIn("上证", summary)
 
 
 if __name__ == "__main__":

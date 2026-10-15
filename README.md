@@ -98,6 +98,9 @@ python bin/run_backfill.py
 
 # 回溯最近 20 个 ETF 交易日
 python bin/run_etf_backfill.py --sessions 20
+
+# 回溯最近 40 个上证指数交易日（用于市场趋势和10日基准收益）
+python bin/run_market_backfill.py --sessions 40
 ```
 
 指定 ETF 回溯结束日：
@@ -172,6 +175,7 @@ Windows 可在 PowerShell 中运行 `bin/register_daily_task.ps1` 和/或 `bin/r
 - 盘后市场快照读取A股上涨家数比例和上证指数20日均线；次日ETF日报按最近5日份额变化、20日ETF趋势及10日相对强度输出候选观察表。
 - 市场与ETF数据缺失、日期不匹配或历史长度不足时，规则不会给出候选。
 - 账户敞口、真实回撤和资金来源不由行情接口提供；账户状态需由使用者维护。详细条件与限制见 [`docs/short_horizon_trading_rules.md`](docs/short_horizon_trading_rules.md)。
+- ETF图片日报展示市场过滤、候选观察、仓位/退出规则和公开持仓观察录入状态。市场指数回溯不补造历史上涨家数；缺少市场宽度时，候选仍会暂停。
 - 参数未经历史和样本外验证，不构成收益保证。
 
 开发者可运行不依赖网络的单元测试：

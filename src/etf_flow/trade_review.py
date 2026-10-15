@@ -44,6 +44,7 @@ def build_trade_review(
         _numeric(current.get("index_sma20")),
         _numeric(current.get("advancer_ratio")),
     )
+    market_detail = _market_evidence(current)
     base_dates = sessions_11
     market_returns: dict[dt.date, float] = {}
     for session in base_dates:
@@ -86,7 +87,24 @@ def build_trade_review(
         )
         name_values = group["name"].dropna()
         name = str(name_values.iloc[-1]) if not name_values.empty else str(code)
-        qualified = candidate.qualified and assessment.regime in (MarketRegime.GREEN, MarketRegime.YELLOW)
+        market_pass = assessment.regime in (MarketRegime.GREEN, MarketRegime.YELLOW)
+        flow_pass = (
+            candidate.flow_to_estimated_value_pct is not None
+            and candidate.flow_to_estimated_value_pct > 0
+            and candidate.flow_days_positive >= 3
+        )
+        latest_close = (
+            _numeric(by_date.loc[target_date].get("close"))
+            if target_date in by_date.index
+            else None
+        )
+        trend_pass = (
+            latest_close is not None
+            and close_sma20 is not None
+            and latest_close > close_sma20
+        )
+        relative_pass = excess_return is not None and excess_return > 0
+        qualified = candidate.qualified and market_pass
         reasons = list(candidate.reasons)
         if assessment.regime is MarketRegime.RED:
             reasons.append("市场偏弱，暂停新开仓")
@@ -101,6 +119,10 @@ def build_trade_review(
             "market_exposure_cap_pct": assessment.exposure_cap_pct * 100,
             "flow_positive_days_5d": candidate.flow_days_positive,
             "flow_to_estimated_value_pct_5d": candidate.flow_to_estimated_value_pct,
+            "flow_pass_5d": flow_pass,
+            "trend_pass_20d": trend_pass,
+            "relative_strength_pass_10d": relative_pass,
+            "market_filter_pass": market_pass,
             "etf_return_10d_pct": etf_return,
             "benchmark_return_10d_pct": benchmark_return,
             "excess_return_10d_pct": excess_return,
@@ -111,7 +133,38 @@ def build_trade_review(
     result = pd.DataFrame.from_records(records)
     if not result.empty:
         result = result.sort_values(["qualified_candidate", "flow_to_estimated_value_pct_5d"], ascending=[False, False]).reset_index(drop=True)
-    return result, _market_message(assessment)
+    return result, _market_message(assessment, market_detail)
+
+
+def build_candidate_summary(review: pd.DataFrame) -> str:
+    """Summarize candidate and individual-filter counts for the report image."""
+    if review.empty:
+        status = "候选观察暂停：市场或必要历史数据不足，按规则不生成候选。"
+    else:
+        qualified = review.loc[
+            review["qualified_candidate"].fillna(False).astype(bool)
+        ]
+        if not qualified.empty:
+            status = "通过全部过滤的候选观察：" + "、".join(
+                qualified.head(3)["name"].astype(str)
+            ) + "。"
+        else:
+            total = len(review)
+            flow_count = int(review["flow_pass_5d"].fillna(False).astype(bool).sum())
+            trend_count = int(review["trend_pass_20d"].fillna(False).astype(bool).sum())
+            relative_count = int(
+                review["relative_strength_pass_10d"].fillna(False).astype(bool).sum()
+            )
+            regime = str(review.iloc[0].get("market_regime", "数据不足"))
+            status = (
+                f"复核 {total} 只：5日资金通过 {flow_count} 只，20日趋势通过 {trend_count} 只，"
+                f"10日相对强度通过 {relative_count} 只；市场过滤为“{regime}”，候选 0 只。"
+            )
+    criteria = (
+        "筛选条件：近5日净申购为正且至少3日为正、收盘高于20日均线、"
+        "近10日跑赢上证，且市场过滤通过。"
+    )
+    return f"{status}\n{criteria}"
 
 
 def save_trade_review(review: pd.DataFrame, target_date: dt.date, processed_dir: Path) -> Path:
@@ -128,6 +181,23 @@ def _market_message(assessment, detail: str | None = None) -> str:
     if detail:
         status += f"（{detail}）"
     return status
+
+
+def _market_evidence(row: pd.Series) -> str:
+    close = _numeric(row.get("index_close"))
+    sma20 = _numeric(row.get("index_sma20"))
+    advancer_ratio = _numeric(row.get("advancer_ratio"))
+    if close is not None and sma20 is not None and close > 0 and sma20 > 0:
+        relation = "高于" if close > sma20 else "未高于"
+        index_text = f"上证 {close:,.2f}，{relation}20日均线 {sma20:,.2f}"
+    else:
+        index_text = "指数收盘或20日均线缺失"
+    breadth_text = (
+        f"上涨家数占比 {advancer_ratio:.1%}"
+        if advancer_ratio is not None and 0 <= advancer_ratio <= 1
+        else "上涨家数占比缺失"
+    )
+    return f"{index_text}；{breadth_text}"
 
 
 def _numeric(value: object) -> float | None:

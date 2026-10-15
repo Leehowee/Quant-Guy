@@ -28,7 +28,9 @@
     "provider": "AKShare / Eastmoney",
     "breadth_api": "stock_zh_a_spot_em",
     "index_api": "stock_zh_index_daily_em",
-    "index_symbol": "sh000001"
+    "index_symbol": "sh000001",
+    "index_history_api": "stock_zh_index_daily",
+    "index_history_symbol": "sh000001"
   },
   "etf": {
     "shares": {
