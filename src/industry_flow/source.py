@@ -260,7 +260,11 @@ def fetch_daily_industry_flow(run_date: dt.date | None = None) -> pd.DataFrame:
     return df
 
 
-THS_PERIODS = data_sources["industry"]["daily"]["periods"]
+_LEGACY_THS_SOURCE = data_sources["industry"].get(
+    "legacy_ths",
+    data_sources.get("industry", {}).get("daily", {}),
+)
+THS_PERIODS = _LEGACY_THS_SOURCE.get("periods", {})
 
 
 def fetch_ths_industry_flow(
@@ -272,7 +276,7 @@ def fetch_ths_industry_flow(
         raise ValueError(f"Unsupported THS period: {period}")
     run_date = run_date or dt.date.today()
     raw = _retry(
-        lambda: resolve_akshare_api(data_sources["industry"]["daily"]["api"])(
+        lambda: resolve_akshare_api(_LEGACY_THS_SOURCE["api"])(
             symbol=THS_PERIODS[period]
         ),
         f"AKShare THS {period} industry fund flow",

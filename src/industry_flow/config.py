@@ -114,6 +114,18 @@ class Settings:
         return self.processed_dir / "industry_flow_ths_periods_features.parquet"
 
     @property
+    def sw_industry_flow_history_file(self) -> Path:
+        return self.processed_dir / "industry_flow_sw_l2_history.parquet"
+
+    @property
+    def sw_industry_flow_features_file(self) -> Path:
+        return self.processed_dir / "industry_flow_sw_l2_features.parquet"
+
+    @property
+    def sw_l2_membership_file(self) -> Path:
+        return self.processed_dir / "sw_l2_membership_history.csv"
+
+    @property
     def backfill_progress_file(self) -> Path:
         return self.processed_dir / "backfill_progress.json"
 

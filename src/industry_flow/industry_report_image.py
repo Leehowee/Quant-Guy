@@ -20,6 +20,7 @@ BLUE = "#315E9B"
 CARD = "#FFFFFF"
 LINE = "#E6EBF2"
 PERIODS = ("即时", "3日", "5日", "10日", "20日")
+SW_PERIODS = ("1日", "3日", "5日", "10日", "20日")
 
 
 def _present(value: Any) -> bool:
@@ -83,10 +84,23 @@ def _draw_rank_card(
         )
         draw.text((x + 28, current_y), name, font=_font(20, True), fill=INK)
         amount = _amount(row.net_amount_yi)
-        change = _pct(getattr(row, change_column, None))
+        if "coverage_pct" in row._fields:
+            coverage = getattr(row, "coverage_pct", None)
+            stock_count = getattr(row, "flow_stock_count", None)
+            coverage_text = (
+                f"覆盖 {float(coverage):.0f}%"
+                if _present(coverage)
+                else "覆盖率未知"
+            )
+            if _present(stock_count):
+                coverage_text += f" · {int(stock_count)} 条股票日记录"
+            detail = f"净额 {amount}    {coverage_text}"
+        else:
+            change = _pct(getattr(row, change_column, None))
+            detail = f"净额 {amount}    涨跌幅 {change}"
         draw.text(
             (x + 28, current_y + 22),
-            f"净额 {amount}    涨跌幅 {change}",
+            detail,
             font=_font(15),
             fill=accent,
         )
@@ -106,7 +120,7 @@ def render_industry_report_png(
     market_snapshot: pd.DataFrame | None = None,
     market_unavailable_reason: str | None = None,
 ) -> Path:
-    """Render market context and THS industry rankings as a DingTalk-ready image."""
+    """Render market context and industry flow rankings as a DingTalk-ready image."""
     if feature_df.empty:
         raise ValueError("Cannot render an industry report from an empty feature table")
     required = {"trade_date", "period", "industry_name", "net_amount_yi"}
@@ -115,6 +129,11 @@ def render_industry_report_png(
         raise ValueError(f"Missing columns for industry image: {missing}")
 
     data = feature_df.copy()
+    is_sw_l2 = (
+        "source" in data.columns
+        and data["source"].astype(str).eq("tushare_moneyflow_sw_l2").any()
+    )
+    periods = SW_PERIODS if is_sw_l2 else PERIODS
     data["trade_date"] = pd.to_datetime(data["trade_date"], errors="coerce").dt.date
     day = data[data["trade_date"] == trade_date]
     market = build_market_report_summary(
@@ -129,16 +148,30 @@ def render_industry_report_png(
     section_height = 342
     footer_height = 122
     panel_width = (WIDTH - margin * 2 - gutter) // 2
-    height = sections_y + section_height * len(PERIODS) + footer_height
+    height = sections_y + section_height * len(periods) + footer_height
     image = Image.new("RGB", (WIDTH, height), BACKGROUND)
     draw = ImageDraw.Draw(image)
 
     draw.rounded_rectangle((margin, 28, WIDTH - margin, 184), radius=28, fill="#17365D")
-    draw.text((66, 48), "行业资金流日报", font=_font(46, True), fill="#FFFFFF")
+    report_title = "申万二级行业 · 沪深A股资金流日报" if is_sw_l2 else "行业资金流日报"
+    subtitle = (
+        "沪深A股个股L2资金流按申万二级归集  ·  滚动交易日累计  ·  单位：亿元"
+        if is_sw_l2
+        else "同花顺行业资金流统计  ·  净额单位：亿元  /  涨跌幅单位：%"
+    )
+    if is_sw_l2 and not day.empty:
+        market_cov = pd.to_numeric(day.get("market_coverage_pct"), errors="coerce").dropna()
+        mapping_cov = pd.to_numeric(day.get("mapping_coverage_pct"), errors="coerce").dropna()
+        if not market_cov.empty and not mapping_cov.empty:
+            subtitle += (
+                f"  ·  个股数据覆盖{market_cov.iloc[0]:.1f}%"
+                f"  ·  行业映射覆盖{mapping_cov.iloc[0]:.1f}%"
+            )
+    draw.text((66, 48), report_title, font=_font(42 if is_sw_l2 else 46, True), fill="#FFFFFF")
     draw.text((68, 110), f"数据日期  {trade_date:%Y-%m-%d}", font=_font(25), fill="#D9E7F7")
     draw.text(
         (68, 151),
-        "同花顺行业资金流统计  ·  净额单位：亿元  /  涨跌幅单位：%",
+        subtitle,
         font=_font(18),
         fill="#BFD0E5",
     )
@@ -176,16 +209,21 @@ def render_industry_report_png(
         fill=MUTED,
     )
 
-    for index, period in enumerate(PERIODS):
+    for index, period in enumerate(periods):
         section_y = sections_y + index * section_height
         period_rows = day[day["period"].astype(str) == period].copy()
-        note = f"{period_rows['industry_name'].nunique()} 个行业 · 按净额排序" if not period_rows.empty else "本周期数据缺失"
+        if period_rows.empty:
+            note = "历史窗口或行业覆盖不足" if is_sw_l2 else "本周期数据缺失"
+        elif is_sw_l2:
+            note = f"{period_rows['industry_name'].nunique()} 个申万二级行业 · 仅纳入覆盖达标项"
+        else:
+            note = f"{period_rows['industry_name'].nunique()} 个行业 · 按净额排序"
         draw.rounded_rectangle(
             (margin, section_y, WIDTH - margin, section_y + 48),
             radius=14,
             fill="#E8EEF7",
         )
-        label = "今日" if period == "即时" else period
+        label = f"{period}累计" if is_sw_l2 else ("今日" if period == "即时" else period)
         draw.text((margin + 22, section_y + 7), label, font=_font(25, True), fill=BLUE)
         draw.text((margin + 125, section_y + 15), note, font=_font(16), fill="#98620F")
 
@@ -195,13 +233,17 @@ def render_industry_report_png(
             period_rows["net_amount_yi"] = pd.to_numeric(
                 period_rows["net_amount_yi"], errors="coerce"
             )
-            change_column = "change_pct" if period == "即时" else "period_change_pct"
-            if change_column not in period_rows.columns:
+            change_column = None if is_sw_l2 else (
+                "change_pct" if period == "即时" else "period_change_pct"
+            )
+            if change_column and change_column not in period_rows.columns:
                 period_rows[change_column] = pd.NA
             inflow = period_rows.nlargest(top_n, "net_amount_yi")
             outflow = period_rows.nsmallest(top_n, "net_amount_yi")
         else:
-            change_column = "change_pct" if period == "即时" else "period_change_pct"
+            change_column = None if is_sw_l2 else (
+                "change_pct" if period == "即时" else "period_change_pct"
+            )
             inflow = period_rows
             outflow = period_rows
 
@@ -229,16 +271,24 @@ def render_industry_report_png(
             top_n,
         )
 
-    footer_y = sections_y + section_height * len(PERIODS) + 20
+    footer_y = sections_y + section_height * len(periods) + 20
     draw.text(
         (48, footer_y),
-        "资金净额及行业涨跌幅按同花顺接口口径展示。",
+        (
+            "范围为Tushare接口提供的沪深A股，北交所未纳入；个股L2主动买卖净流入按申万二级成分有效日期归集。"
+            if is_sw_l2
+            else "资金净额及行业涨跌幅按同花顺接口口径展示。"
+        ),
         font=_font(17),
         fill=MUTED,
     )
     draw.text(
         (48, footer_y + 31),
-        "仅作行业资金流描述性统计，不构成买卖信号。",
+        (
+            "成分覆盖不足项不参与排名；该口径不识别具体资金主体，也不代表行业指数涨跌。"
+            if is_sw_l2
+            else "仅作行业资金流描述性统计，不构成买卖信号。"
+        ),
         font=_font(17),
         fill=MUTED,
     )

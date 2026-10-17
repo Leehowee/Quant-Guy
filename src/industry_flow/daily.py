@@ -4,15 +4,18 @@ import datetime as dt
 import pandas as pd
 
 from .config import settings
-from .digest import build_ths_period_digest
+from .digest import build_sw_industry_flow_digest
 from .dingtalk import send_group_image_markdown
-from .features import build_features
 from .industry_report_image import render_industry_report_png
 from .market_snapshot import capture_market_snapshot, save_market_snapshot
-from .source import (
-    THS_PERIODS,
-    fetch_ths_industry_flow,
-    is_cn_trade_date,
+from .source import is_cn_trade_date
+from .sw_industry_flow import (
+    aggregate_sw_l2_daily_flow,
+    build_sw_period_snapshot,
+    fetch_open_trade_dates,
+    fetch_tushare_daily_universe,
+    fetch_tushare_moneyflow,
+    refresh_sw_l2_membership_cache,
 )
 from .storage import (
     save_daily_csv,
@@ -30,21 +33,24 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
         print(f"[daily] {today} is not a CN trade date. Skip.")
         return
 
-    snapshots = []
-    for period in THS_PERIODS:
-        print(f"[daily] fetching THS industry flow: {period}")
-        snapshots.append(fetch_ths_industry_flow(period, run_date=today))
-    daily = pd.DataFrame.from_records(
-        row
-        for snapshot in snapshots
-        for row in snapshot.to_dict(orient="records")
+    print("[daily] refreshing Shenwan L2 membership history")
+    memberships = refresh_sw_l2_membership_cache(settings.sw_l2_membership_file)
+    print("[daily] fetching all available Shanghai/Shenzhen A-share Tushare moneyflow")
+    daily_universe = fetch_tushare_daily_universe(today)
+    moneyflow = fetch_tushare_moneyflow(today)
+    daily = aggregate_sw_l2_daily_flow(
+        today,
+        daily_universe,
+        moneyflow,
+        memberships,
     )
-    received_periods = set(daily["period"].dropna().astype(str))
-    if received_periods != set(THS_PERIODS):
-        raise RuntimeError(
-            f"Incomplete THS periods: expected {list(THS_PERIODS)}, "
-            f"received {sorted(received_periods)}"
-        )
+    market_coverage = float(daily["market_coverage_pct"].iloc[0])
+    mapping_coverage = float(daily["mapping_coverage_pct"].iloc[0])
+    print(
+        f"[daily] aggregated {len(daily)} Shenwan L2 sectors; "
+        f"stock-flow coverage={market_coverage:.1f}%, "
+        f"membership coverage={mapping_coverage:.1f}%"
+    )
 
     market_snapshot = pd.DataFrame()
     market_unavailable_reason = None
@@ -62,7 +68,7 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
 
     raw_file = (
         settings.raw_daily_dir
-        / f"industry_flow_{today:%Y%m%d}_akshare_ths_all_periods.csv"
+        / f"industry_flow_{today:%Y%m%d}_sw_l2_tushare.csv"
     )
 
     save_daily_csv(
@@ -74,22 +80,27 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
 
     history = upsert_parquet(
         daily,
-        settings.ths_history_file,
-        key=["trade_date", "period", "industry_name"],
+        settings.sw_industry_flow_history_file,
+        key=["trade_date", "industry_code"],
     )
 
-    features = build_features(
+    sessions = fetch_open_trade_dates(today, 20)
+    features = build_sw_period_snapshot(
         history,
-        flow_column="net_amount_yi",
-        rank_prefix="net_flow",
+        sessions,
     )
+    if features.empty:
+        raise RuntimeError(
+            "No sufficient Shenwan L2 flow snapshot could be built; "
+            "run bin/run_sw_industry_backfill.py --sessions 20 to seed history"
+        )
 
     write_parquet_atomic(
         features,
-        settings.ths_feature_file,
+        settings.sw_industry_flow_features_file,
     )
 
-    msg = build_ths_period_digest(
+    msg = build_sw_industry_flow_digest(
         features,
         top_n=settings.digest_top_n,
         market_snapshot=market_snapshot,
@@ -104,7 +115,7 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
     if send_dingtalk:
         sent_marker = (
             settings.processed_dir
-            / f"dingtalk_ths_periods_sent_{today:%Y%m%d}.txt"
+            / f"dingtalk_sw_l2_sent_{today:%Y%m%d}.txt"
         )
         if sent_marker.exists() and not force_send:
             print(f"[daily] DingTalk already sent for {today}; skip duplicate.")
@@ -121,8 +132,10 @@ def run_daily(send_dingtalk: bool = True, force_send: bool = False) -> None:
                 today,
                 image_path,
                 top_n=settings.digest_top_n,
+                market_snapshot=market_snapshot,
+                market_unavailable_reason=market_unavailable_reason,
             )
-            title = f"行业资金流日报 {today:%Y-%m-%d}"
+            title = f"申万二级行业资金流日报 {today:%Y-%m-%d}"
             send_group_image_markdown(
                 settings.dingtalk_client_id,
                 settings.dingtalk_client_secret,

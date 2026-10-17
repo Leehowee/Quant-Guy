@@ -207,3 +207,93 @@ def build_ths_period_digest(
         "说明：资金流为同花顺统计口径；仅作描述性展示，不构成买卖信号。",
     ]
     return "\n".join(lines)
+
+
+def build_sw_industry_flow_digest(
+    feature_df: pd.DataFrame,
+    top_n: int = 5,
+    market_snapshot: pd.DataFrame | None = None,
+    trade_date=None,
+    market_unavailable_reason: str | None = None,
+) -> str:
+    """Render rolling full-market stock-flow sums grouped by SW Level 2."""
+    if feature_df.empty:
+        return "【申万二级行业资金流日报】暂无满足覆盖率要求的数据。"
+
+    df = feature_df.copy()
+    df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
+    latest_date = df["trade_date"].max()
+    report_date = trade_date or latest_date.date()
+    latest = df.loc[df["trade_date"].eq(latest_date)].copy()
+    market = build_market_report_summary(
+        market_snapshot,
+        report_date,
+        unavailable_reason=market_unavailable_reason,
+    )
+    periods = ["1日", "3日", "5日", "10日", "20日"]
+    market_coverage = pd.to_numeric(
+        latest.get("market_coverage_pct", pd.Series(dtype=float)), errors="coerce"
+    ).dropna()
+    mapping_coverage = pd.to_numeric(
+        latest.get("mapping_coverage_pct", pd.Series(dtype=float)), errors="coerce"
+    ).dropna()
+    coverage_note = ""
+    if not market_coverage.empty and not mapping_coverage.empty:
+        coverage_note = (
+            f"当日全市场个股资金流覆盖 {market_coverage.iloc[0]:.1f}%；"
+            f"申万二级映射覆盖 {mapping_coverage.iloc[0]:.1f}%。"
+        )
+
+    lines = [
+        f"# 申万二级行业 · 沪深A股资金流日报 {latest_date:%Y-%m-%d}",
+        "净额单位：亿元；1/3/5/10/20日均为最近相应交易日的净流入累计值。",
+        "",
+        "### 短线市场环境过滤（仅作规则观察）",
+        market["status"],
+        market["breadth"],
+        market["trend"],
+        f"数据说明：{market['note']}",
+        "",
+        "| 周期 | 净流入前{n} | 净流出前{n} |".format(n=top_n),
+        "|---|---|---|",
+    ]
+
+    for period in periods:
+        rows = latest.loc[latest["period"].astype(str).eq(period)].copy()
+        if rows.empty:
+            lines.append(f"| {period}累计 | 历史窗口或行业覆盖不足 | 历史窗口或行业覆盖不足 |")
+            continue
+        rows["net_amount_yi"] = pd.to_numeric(rows["net_amount_yi"], errors="coerce")
+        inflow = rows.nlargest(top_n, "net_amount_yi")
+        outflow = rows.nsmallest(top_n, "net_amount_yi")
+
+        def render(row, rank: int) -> str:
+            amount = float(row.net_amount_yi)
+            coverage = getattr(row, "coverage_pct", pd.NA)
+            stocks = getattr(row, "flow_stock_count", pd.NA)
+            suffix = ""
+            if pd.notna(coverage):
+                suffix = f"（覆盖{float(coverage):.0f}%"
+                if pd.notna(stocks):
+                    suffix += f"，{int(stocks)}条股票日记录"
+                suffix += "）"
+            return f"{rank}. {row.industry_name} {amount:+.2f}亿{suffix}"
+
+        inflow_cell = "<br>".join(
+            render(row, rank)
+            for rank, row in enumerate(inflow.itertuples(index=False), 1)
+        )
+        outflow_cell = "<br>".join(
+            render(row, rank)
+            for rank, row in enumerate(outflow.itertuples(index=False), 1)
+        )
+        lines.append(f"| {period}累计 | {inflow_cell} | {outflow_cell} |")
+
+    lines += [
+        "",
+        coverage_note,
+        "覆盖范围：Tushare接口文档中的沪深A股；北交所未纳入。个股L2主动买卖净流入按"
+        "申万二级成分有效日期归集，不代表机构或特定账户持仓，也不等于行业指数表现。",
+        "数据不足的行业或周期不参与排名；以上为描述性统计，不构成买卖信号。",
+    ]
+    return "\n".join(line for line in lines if line is not None)

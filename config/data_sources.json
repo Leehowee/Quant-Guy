@@ -5,6 +5,17 @@
   },
   "industry": {
     "daily": {
+      "provider": "Tushare",
+      "flow_api": "moneyflow",
+      "universe_api": "daily",
+      "membership_api": "index_member_all",
+      "calendar_api": "trade_cal",
+      "flow_field": "net_mf_amount",
+      "flow_unit": "万元",
+      "minimum_coverage": 0.95,
+      "rolling_windows": [1, 3, 5, 10, 20]
+    },
+    "legacy_ths": {
       "provider": "AKShare / Tonghuashun",
       "api": "stock_fund_flow_industry",
       "periods": {

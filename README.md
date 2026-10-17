@@ -54,10 +54,11 @@ python -m pip install -r requirements.txt
 
 ### 行业资金流
 
-- 每日读取同花顺/AKShare 的即时、3、5、10、20 日行业资金流快照。
-- 计算各周期资金净流入排名、排名变化和描述性特征；仅即时序列用于连续净流入天数等日序列特征。
-- 可单独回溯东方财富行业历史数据。东方财富历史值和同花顺快照分开存储，不混算。
-- 行业快照金额以数据源返回的亿元口径保存。
+- 日报按申万二级行业分类，把沪深A股个股资金净流入按交易日有效成分归集；资金源为 Tushare `moneyflow`，原始单位万元，报告换算为亿元。
+- 报告显示最近 1、3、5、10、20 个交易日的累计净流入。滚动窗口从日频行业归集历史计算，缺少任一交易日或行业覆盖不足时不生成该行业/周期排名。
+- 个股资金流和申万成分接口都要求 Tushare 至少 2000 积分。单日活跃股票资金流覆盖率、申万映射覆盖率以及分行业覆盖率都会校验；默认覆盖阈值为 95%。
+- 当前 `moneyflow` 接口文档范围是沪深A股，不含北交所；该口径是个股主动买卖资金流统计，不识别国家队、机构或具体账户，也不等于行业指数表现。
+- 同花顺行业排名和东方财富历史行业序列仍保留为旧数据/兼容代码，不能与新的申万二级个股归集序列拼接或回算。
 
 ### ETF 资金流估算
 
@@ -67,12 +68,13 @@ python -m pip install -r requirements.txt
 
 ## 数据源与可更新配置
 
-当前数据源清单保存在 [`config/data_sources.json`](config/data_sources.json)，Python 启动时会读取它。可在该文件中更新 AKShare API 名称、同花顺周期映射、东方财富地址、交易所份额接口、ETF 报价接口与债券名称过滤词。
+当前数据源清单保存在 [`config/data_sources.json`](config/data_sources.json)，Python 启动时会读取它。可在该文件中更新 Tushare 行业资金流覆盖阈值、AKShare API 名称、同花顺周期映射、东方财富地址、交易所份额接口、ETF 报价接口与债券名称过滤词。
 
 | 数据 | 当前来源与接口 |
 | --- | --- |
-| 行业每日快照 | 同花顺，经 AKShare `stock_fund_flow_industry` 获取即时、3、5、10、20 日排名 |
-| 行业历史回溯 | 东方财富行业列表页 `data.eastmoney.com/bkzj/hy.html`，以及 `push2.eastmoney.com` 和 `push2his.eastmoney.com` 行情接口 |
+| 行业每日资金流 | Tushare `moneyflow` 个股L2主动买卖净流入；按 `index_member_all` 申万二级有效成分归集 |
+| 行业历史回溯 | `bin/run_sw_industry_backfill.py` 通过 Tushare `daily`、`moneyflow`、`index_member_all` 和 `trade_cal` 回补滚动窗口所需交易日 |
+| 旧行业统计 | 同花顺/AKShare 与东方财富行业序列保留在旧配置及历史文件中，不再作为当前行业日报口径 |
 | 交易日历 | AKShare `tool_trade_date_hist_sina` |
 | ETF 份额 | 上交所 AKShare `fund_etf_scale_sse`；深交所 AKShare `fund_scale_daily_szse` |
 | ETF 当日价格 | 首选东方财富 AKShare `fund_etf_spot_em`；失败时回退新浪 `fund_etf_category_sina` |
@@ -87,13 +89,16 @@ python -m pip install -r requirements.txt
 在仓库目录执行：
 
 ```sh
+# 首次生成申万二级行业最近20个交易日历史（用于日报滚动窗口）
+python bin/run_sw_industry_backfill.py --sessions 20
+
 # 行业资金流每日快照与特征
 python bin/run_daily.py
 
 # ETF 份额变化与净申购估算
 python bin/run_etf_flow_daily.py
 
-# 行业历史数据回溯（请求量较大）
+# 旧版东方财富行业历史数据回溯（不写入申万二级日报）
 python bin/run_backfill.py
 
 # 回溯最近 20 个 ETF 交易日
@@ -146,6 +151,7 @@ cp config/.env.example .env
 | `DINGTALK_WEBHOOK` | 可选的钉钉群机器人 Webhook |
 | `DINGTALK_CLIENT_ID`、`DINGTALK_CLIENT_SECRET`、`DINGTALK_OPEN_CONVERSATION_ID` | 可选的钉钉应用机器人图片推送配置 |
 | `EASTMONEY_DIRECT` | 是否绕过 Python 代理环境变量直连东方财富，默认 `0` |
+| `TUSHARE_TOKEN` | 申万二级行业个股资金流采集凭据；保存在本机 `.env`，不要提交到代码库 |
 | `DATA_SOURCE_CONFIG` | 数据源 JSON 路径，默认 `config/data_sources.json` |
 | `REPORT_FONT`、`REPORT_FONT_BOLD` | 可选的常规与粗体中文字体文件路径 |
 
@@ -166,6 +172,7 @@ Windows 可在 PowerShell 中运行 `bin/register_daily_task.ps1` 和/或 `bin/r
 ## 数据与使用限制
 
 - 接口数据的覆盖范围、分类与口径可能随供应方调整；运行时应检查实际数据日期及日志。
+- 行业资金流当前使用 Tushare 文档所述的沪深A股 `moneyflow`；北交所未纳入，覆盖率不足时日报会跳过受影响行业或周期。
 - ETF 的估算净申购将份额变化乘以单一收盘价，可能与实际现金流不同。
 - 这些数据与特征是历史和横截面统计，不构成交易建议或预测保证。
 - 使用者应自行遵守数据源服务条款及所在地适用规则。
